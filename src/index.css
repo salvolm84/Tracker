@@ -1,0 +1,143 @@
+:root,
+html[data-mantine-color-scheme='light'] {
+  --jira-bg: #edf2f8;
+  --jira-bg-muted: #e3eaf3;
+  --jira-surface: #ffffff;
+  --jira-surface-soft: #f6f8fb;
+  --jira-surface-strong: #ffffff;
+  --jira-shell-top: #ffffff;
+  --jira-shell-bottom: #edf2f8;
+  --jira-sidebar-bg: #ffffff;
+  --jira-sidebar-text: #162033;
+  --jira-sidebar-muted: #4e6078;
+  --jira-sidebar-chip: #eef3fb;
+  --jira-sidebar-chip-text: #5c6f88;
+  --jira-sidebar-icon-bg: #eef3fb;
+  --jira-sidebar-icon-text: #47617e;
+  --jira-border: #cfd8e4;
+  --jira-border-strong: #b7c4d4;
+  --jira-text: #162033;
+  --jira-text-muted: #4e6078;
+  --jira-accent: #2f6feb;
+  --jira-accent-soft: rgba(47, 111, 235, 0.12);
+  --jira-accent-strong: #1f58c8;
+  --jira-subtle-bg: #f6f8fb;
+  --jira-hover-bg: #f4f8ff;
+  --jira-selected-bg: #e9f1ff;
+  --jira-code-bg: #e8f0ff;
+  --jira-code-text: #245ac7;
+  --jira-preview-bg: #1f2634;
+  --jira-preview-text: #d9e5fb;
+  --jira-placeholder: #74879f;
+  --jira-card-shadow: 0 1px 2px rgba(21, 34, 54, 0.05);
+  --jira-card-shadow-strong: 0 8px 24px rgba(21, 34, 54, 0.03);
+  --jira-success-soft: rgba(34, 139, 102, 0.12);
+  --jira-danger-soft: rgba(214, 71, 87, 0.12);
+  --mantine-color-body: var(--jira-bg);
+  --mantine-color-text: var(--jira-text);
+  --mantine-color-dimmed: var(--jira-text-muted);
+  --mantine-color-default: #ffffff;
+  --mantine-color-default-hover: #f2f5f9;
+  --mantine-color-default-border: var(--jira-border-strong);
+  --mantine-primary-color-filled: var(--jira-accent);
+  --mantine-primary-color-filled-hover: var(--jira-accent-strong);
+  --mantine-primary-color-light: #e7f0ff;
+  --mantine-primary-color-light-hover: #dce9ff;
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--jira-text);
+  background:
+    linear-gradient(180deg, #f7f9fc 0%, #edf2f8 100%);
+}
+
+html[data-mantine-color-scheme='dark'] {
+  --jira-bg: #0f141c;
+  --jira-bg-muted: #171d27;
+  --jira-surface: #1a2230;
+  --jira-surface-soft: #131a24;
+  --jira-surface-strong: #202938;
+  --jira-shell-top: #141b26;
+  --jira-shell-bottom: #0f141c;
+  --jira-sidebar-bg: #151d28;
+  --jira-sidebar-text: #eef3fb;
+  --jira-sidebar-muted: #9caac0;
+  --jira-sidebar-chip: rgba(255, 255, 255, 0.06);
+  --jira-sidebar-chip-text: #b7c4d8;
+  --jira-sidebar-icon-bg: rgba(255, 255, 255, 0.05);
+  --jira-sidebar-icon-text: #d2dced;
+  --jira-border: #283244;
+  --jira-border-strong: #364258;
+  --jira-text: #edf3fb;
+  --jira-text-muted: #9caac0;
+  --jira-accent: #73a7ff;
+  --jira-accent-soft: rgba(115, 167, 255, 0.16);
+  --jira-accent-strong: #90b9ff;
+  --jira-subtle-bg: #1d2634;
+  --jira-hover-bg: #1c2738;
+  --jira-selected-bg: #1d3356;
+  --jira-code-bg: #23314a;
+  --jira-code-text: #cfe0ff;
+  --jira-preview-bg: #0f141d;
+  --jira-preview-text: #dce7fb;
+  --jira-placeholder: #7f90a7;
+  --jira-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --jira-card-shadow-strong: 0 12px 28px rgba(0, 0, 0, 0.22);
+  --jira-success-soft: rgba(34, 139, 102, 0.18);
+  --jira-danger-soft: rgba(214, 71, 87, 0.18);
+  --mantine-color-body: var(--jira-bg);
+  --mantine-color-text: var(--jira-text);
+  --mantine-color-dimmed: var(--jira-text-muted);
+  --mantine-color-default: var(--jira-surface);
+  --mantine-color-default-hover: #202938;
+  --mantine-color-default-border: var(--jira-border-strong);
+  --mantine-primary-color-filled: var(--jira-accent);
+  --mantine-primary-color-filled-hover: var(--jira-accent-strong);
+  --mantine-primary-color-light: rgba(115, 167, 255, 0.16);
+  --mantine-primary-color-light-hover: rgba(115, 167, 255, 0.24);
+  color-scheme: dark;
+  color: var(--jira-text);
+  background: linear-gradient(180deg, #141b26 0%, #0f141c 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+  background: var(--jira-bg);
+  color: var(--jira-text);
+  font-family:
+    "SF Pro Display", "Segoe UI Variable", "Inter", "Helvetica Neue", sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+code {
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.22rem;
+  background: var(--jira-code-bg);
+  color: var(--jira-code-text);
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  background: rgba(50, 120, 255, 0.18);
+}
