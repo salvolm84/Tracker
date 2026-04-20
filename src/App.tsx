@@ -1,9 +1,11 @@
-import { startTransition, useEffect, useEffectEvent, useState } from 'react'
+import { startTransition, useEffect, useEffectEvent, useRef, useState } from 'react'
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
   Card,
+  Checkbox,
   Divider,
   Group,
   InputLabel,
@@ -26,6 +28,11 @@ import {
   useMantineColorScheme,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from '@tauri-apps/plugin-notification'
 import { DateInput } from '@mantine/dates'
 import { useForm } from '@mantine/form'
 import {
@@ -36,9 +43,11 @@ import {
   IconCheck,
   IconCircleCheck,
   IconClipboardText,
+  IconCopy,
   IconDatabase,
   IconEdit,
   IconFileDescription,
+  IconFileExport,
   IconHelp,
   IconPaperclip,
   IconFolders,
@@ -46,8 +55,12 @@ import {
   IconLayoutKanban,
   IconListDetails,
   IconMoon,
+  IconPrinter,
+  IconStar,
+  IconStarFilled,
   IconSun,
   IconTargetArrow,
+  IconTemplate,
   IconTrash,
   IconUsersGroup,
   IconX,
@@ -154,7 +167,55 @@ type RefreshErrorMap = Partial<
   Record<'bootstrap' | 'stats' | 'records' | 'backups' | 'attachments', string>
 >
 
+type FormTemplate = {
+  id: string
+  name: string
+  values: {
+    title: string
+    owner: string | null
+    projects: string[]
+    departments: string[]
+    description: string
+    effort: string | null
+    impact: string | null
+    priority: string | null
+    status: string | null
+    reminderCadence: string | null
+    categories: string[]
+  }
+}
+
 const savedViewsStorageKey = 'tracker.saved-views.v1'
+const pinnedIdsStorageKey = 'tracker.pinned-ids.v1'
+const formTemplatesStorageKey = 'tracker.form-templates.v1'
+
+function safeLoadPinnedIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(pinnedIdsStorageKey)
+    const parsed = raw ? JSON.parse(raw) : []
+    return new Set(Array.isArray(parsed) ? parsed : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function safeLoadFormTemplates(): FormTemplate[] {
+  try {
+    const raw = localStorage.getItem(formTemplatesStorageKey)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function escapeCsvCell(value: string): string {
+  const str = String(value)
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`
+  }
+  return str
+}
 
 const initialValues: ActivityFormValues = {
   title: '',
@@ -1901,9 +1962,18 @@ function App() {
   const currentIsoWeek = dayjs().isoWeek()
   const currentIsoWeekStart = dayjs().startOf('isoWeek')
   const currentIsoWeekEnd = dayjs().endOf('isoWeek')
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const notifiedRecordIds = useRef<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState<PageKey>('overview')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false)
+  const [pinnedRecordIds, setPinnedRecordIds] = useState<Set<string>>(() => safeLoadPinnedIds())
+  const [isBulkMode, setIsBulkMode] = useState(false)
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set())
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false)
+  const [formTemplates, setFormTemplates] = useState<FormTemplate[]>(() => safeLoadFormTemplates())
+  const [templateSaveName, setTemplateSaveName] = useState('')
+  const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState(false)
   const [bootstrapData, setBootstrapData] =
     useState<BootstrapPayload>(fallbackBootstrap)
   const [stats, setStats] = useState<DatabaseStats>(fallbackStats)
@@ -2187,6 +2257,160 @@ function App() {
     setStatusMessage('Edit cancelled. The form is back in create mode.')
   }
 
+  function duplicateRecord(record: ActivityRecord) {
+    form.setValues({
+      title: `${record.title} (copy)`,
+      owner: record.owner,
+      projects: [...record.projects],
+      startDate: dayjs(record.startDate).toDate(),
+      endDate: dayjs(record.endDate).toDate(),
+      departments: [...record.departments],
+      description: record.description,
+      effort: record.effort,
+      impact: record.impact,
+      priority: record.priority,
+      status: record.status,
+      reminderCadence: record.reminderCadence,
+      categories: [...record.categories],
+      attachments: [],
+    })
+    setEditingRecordId(null)
+    setEditingRecordVersion(null)
+    setAttachmentError(null)
+    setCurrentPage('form')
+    setStatusTone('info')
+    setStatusMessage(`Duplicated "${record.title}". Adjust fields and save to create a new record.`)
+  }
+
+  function togglePinnedRecord(id: string) {
+    setPinnedRecordIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      localStorage.setItem(pinnedIdsStorageKey, JSON.stringify([...next]))
+      return next
+    })
+  }
+
+  function saveFormTemplate(name: string) {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const template: FormTemplate = {
+      id: crypto.randomUUID(),
+      name: trimmed,
+      values: {
+        title: form.values.title,
+        owner: form.values.owner,
+        projects: [...form.values.projects],
+        departments: [...form.values.departments],
+        description: form.values.description,
+        effort: form.values.effort,
+        impact: form.values.impact,
+        priority: form.values.priority,
+        status: form.values.status,
+        reminderCadence: form.values.reminderCadence,
+        categories: [...form.values.categories],
+      },
+    }
+    setFormTemplates((current) => {
+      const next = [...current, template]
+      localStorage.setItem(formTemplatesStorageKey, JSON.stringify(next))
+      return next
+    })
+    setTemplateSaveName('')
+    notifications.show({ color: 'teal', title: 'Template saved', message: `"${trimmed}" saved.`, autoClose: 3000 })
+  }
+
+  function loadFormTemplate(template: FormTemplate) {
+    form.setValues({
+      ...form.values,
+      title: template.values.title || form.values.title,
+      owner: template.values.owner ?? form.values.owner,
+      projects: template.values.projects.length ? template.values.projects : form.values.projects,
+      departments: template.values.departments.length ? template.values.departments : form.values.departments,
+      description: template.values.description || form.values.description,
+      effort: template.values.effort ?? form.values.effort,
+      impact: template.values.impact ?? form.values.impact,
+      priority: template.values.priority ?? form.values.priority,
+      status: template.values.status ?? form.values.status,
+      reminderCadence: template.values.reminderCadence ?? form.values.reminderCadence,
+      categories: template.values.categories.length ? template.values.categories : form.values.categories,
+    })
+    setIsTemplatesModalOpen(false)
+    notifications.show({ color: 'blue', title: 'Template loaded', message: `"${template.name}" applied to form.`, autoClose: 3000 })
+  }
+
+  function deleteFormTemplate(id: string) {
+    setFormTemplates((current) => {
+      const next = current.filter((t) => t.id !== id)
+      localStorage.setItem(formTemplatesStorageKey, JSON.stringify(next))
+      return next
+    })
+  }
+
+  function exportFilteredRecordsCsv() {
+    const headers = ['ID', 'Title', 'Owner', 'Projects', 'Departments', 'Categories', 'Start Date', 'End Date', 'Status', 'Priority', 'Effort', 'Impact', 'Reminder Cadence', 'Comments', 'Description', 'Submitted At']
+    const rows = filteredRecords.map((r) => [
+      formatRecordKey(r.id),
+      r.title,
+      r.owner,
+      r.projects.join('; '),
+      r.departments.join('; '),
+      r.categories.join('; '),
+      r.startDate,
+      r.endDate,
+      r.status,
+      r.priority,
+      r.effort,
+      r.impact,
+      r.reminderCadence,
+      String(r.comments.length),
+      r.description.replace(/\r?\n/g, ' '),
+      r.submittedAt,
+    ])
+    const csv = [headers, ...rows].map((row) => row.map(escapeCsvCell).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `tracker-records-${dayjs().format('YYYY-MM-DD')}.csv`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    notifications.show({ color: 'teal', title: 'CSV exported', message: `${filteredRecords.length} record${filteredRecords.length === 1 ? '' : 's'} exported.`, autoClose: 3000 })
+  }
+
+  async function handleBulkStatusUpdate(status: string) {
+    if (bulkSelectedIds.size === 0) return
+    setIsBulkUpdating(true)
+    const targets = filteredRecords.filter((r) => bulkSelectedIds.has(r.id))
+    let successCount = 0
+    for (const record of targets) {
+      try {
+        await quickUpdateActivity(record.id, {
+          status,
+          expectedLastModifiedAt: recordConcurrencyToken(record),
+        })
+        successCount++
+      } catch {
+        // continue with remaining records
+      }
+    }
+    await refreshRecords({ silent: true })
+    await refreshStats({ silent: true })
+    setBulkSelectedIds(new Set())
+    setIsBulkMode(false)
+    setIsBulkUpdating(false)
+    notifications.show({
+      color: 'teal',
+      title: 'Bulk update complete',
+      message: `${successCount} of ${targets.length} record${targets.length === 1 ? '' : 's'} moved to "${status}".`,
+      autoClose: 4000,
+    })
+  }
+
   const hasActiveFilters =
     sharedFilters.searchTerm.trim().length > 0 ||
     sharedFilters.owners.length > 0 ||
@@ -2200,6 +2424,10 @@ function App() {
   const filteredRecords = records.filter((record) =>
     matchesSharedFilters(record, sharedFilters),
   )
+  const recordsListDisplay = [
+    ...filteredRecords.filter((r) => pinnedRecordIds.has(r.id)),
+    ...filteredRecords.filter((r) => !pinnedRecordIds.has(r.id)),
+  ]
   const activeFilterGroups = [
     {
       label: 'Search',
@@ -2709,6 +2937,13 @@ function App() {
       return
     }
 
+    if (event.key === '/') {
+      event.preventDefault()
+      setIsFiltersCollapsed(false)
+      setTimeout(() => searchInputRef.current?.focus(), 80)
+      return
+    }
+
     if (/^[1-7]$/.test(event.key)) {
       const nextPage = orderedPages[Number(event.key) - 1]
       if (nextPage) {
@@ -2770,6 +3005,49 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [])
+
+  useEffect(() => {
+    if (isBootstrapping || records.length === 0) return
+
+    async function checkAndNotify() {
+      const dueRecords = records.filter((record) => {
+        const signals = recordSignalState(record, bootstrapData.reminderCadences)
+        return signals.reminderDue && !notifiedRecordIds.current.has(record.id)
+      })
+      if (dueRecords.length === 0) return
+
+      try {
+        let granted = await isPermissionGranted()
+        if (!granted) {
+          const result = await requestPermission()
+          granted = result === 'granted'
+        }
+        if (!granted) return
+
+        const toNotify = dueRecords.slice(0, 3)
+        for (const record of toNotify) {
+          sendNotification({
+            title: 'Tracker reminder',
+            body: `${record.title} is due for review (${record.reminderCadence})`,
+          })
+          notifiedRecordIds.current.add(record.id)
+        }
+        if (dueRecords.length > 3) {
+          sendNotification({
+            title: 'Tracker',
+            body: `${dueRecords.length - 3} more record${dueRecords.length - 3 === 1 ? '' : 's'} are due for review`,
+          })
+          dueRecords.slice(3).forEach((r) => notifiedRecordIds.current.add(r.id))
+        }
+      } catch {
+        // notifications not available in this environment
+      }
+    }
+
+    void checkAndNotify()
+    const interval = setInterval(() => void checkAndNotify(), 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [records, bootstrapData.reminderCadences, isBootstrapping])
 
   async function refreshStats(options?: { silent?: boolean; filters?: StatsFilters }) {
     const silent = options?.silent ?? false
@@ -4103,6 +4381,10 @@ function App() {
               <Text size="sm" c="dimmed">Open shortcuts help</Text>
               <kbd className="kbd-hint">?</kbd>
             </div>
+            <div className="shortcut-row">
+              <Text size="sm" c="dimmed">Focus search</Text>
+              <kbd className="kbd-hint">/</kbd>
+            </div>
             <Text size="sm" fw={700} c="dimmed" mt="sm" mb={4}>Records page</Text>
             <div className="shortcut-row">
               <Text size="sm" c="dimmed">Next record</Text>
@@ -4123,6 +4405,53 @@ function App() {
               <kbd className="kbd-hint">E</kbd>
             </div>
           </div>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={isTemplatesModalOpen}
+        onClose={() => setIsTemplatesModalOpen(false)}
+        title="Form templates"
+        centered
+        size="md"
+      >
+        <Stack gap="md">
+          <div className="grid-2">
+            <TextInput
+              placeholder="Template name"
+              value={templateSaveName}
+              onChange={(e) => setTemplateSaveName(e.currentTarget.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveFormTemplate(templateSaveName) }}
+            />
+            <Button
+              variant="light"
+              color="blue"
+              radius="xl"
+              onClick={() => saveFormTemplate(templateSaveName)}
+              disabled={!templateSaveName.trim()}
+            >
+              Save current form
+            </Button>
+          </div>
+          {formTemplates.length === 0 ? (
+            <Text size="sm" c="dimmed">No templates saved yet. Fill in the form and save it as a template.</Text>
+          ) : (
+            <Stack gap="xs">
+              {formTemplates.map((template) => (
+                <Group key={template.id} justify="space-between" className="template-row">
+                  <Text fw={600} size="sm">{template.name}</Text>
+                  <Group gap="xs">
+                    <Button size="compact-sm" variant="light" color="blue" radius="xl" onClick={() => loadFormTemplate(template)}>
+                      Load
+                    </Button>
+                    <ActionIcon size="sm" variant="subtle" color="red" onClick={() => deleteFormTemplate(template.id)}>
+                      <IconTrash size={14} />
+                    </ActionIcon>
+                  </Group>
+                </Group>
+              ))}
+            </Stack>
+          )}
         </Stack>
       </Modal>
 
@@ -4633,8 +4962,9 @@ function App() {
                     <div className="filter-toolbar-grid">
                       <TextInput
                         label="Search"
-                        placeholder="Search title, description, comments, owner, project..."
+                        placeholder="Search title, description, comments, owner, project... (/)"
                         value={sharedFilters.searchTerm}
+                        ref={searchInputRef}
                         onChange={(event) =>
                           setSharedFilters((current) => ({
                             ...current,
@@ -5077,6 +5407,15 @@ function App() {
                   </div>
 
                   <Group gap="sm">
+                    <Button
+                      type="button"
+                      variant="default"
+                      radius="xl"
+                      leftSection={<IconTemplate size={16} />}
+                      onClick={() => setIsTemplatesModalOpen(true)}
+                    >
+                      Templates
+                    </Button>
                     {editingRecordId ? (
                       <Button
                         type="button"
@@ -5416,22 +5755,43 @@ function App() {
                     Saved records
                   </Title>
                   <Text className="form-copy">
-                    Select an item to inspect it in detail. Use <code>J</code> and{' '}
-                    <code>K</code> to move through the list, and <code>E</code> to
-                    jump into edit mode.
+                    Select an item to inspect it. Use <code>J</code>/<code>↓</code> and{' '}
+                    <code>K</code>/<code>↑</code> to navigate, <code>E</code> to edit, <code>/</code> to search.
                   </Text>
                 </div>
 
-                <Button
-                  variant="light"
-                  color="blue"
-                  radius="xl"
-                  onClick={() => void refreshRecords()}
-                  loading={isRefreshingRecords}
-                  disabled={isBootstrapping}
-                >
-                  Refresh records
-                </Button>
+                <Group gap="sm">
+                  <Button
+                    variant="default"
+                    radius="xl"
+                    leftSection={<IconFileExport size={16} />}
+                    onClick={exportFilteredRecordsCsv}
+                    disabled={filteredRecords.length === 0}
+                  >
+                    Export CSV
+                  </Button>
+                  <Button
+                    variant={isBulkMode ? 'filled' : 'default'}
+                    color={isBulkMode ? 'blue' : undefined}
+                    radius="xl"
+                    onClick={() => {
+                      setIsBulkMode((v) => !v)
+                      setBulkSelectedIds(new Set())
+                    }}
+                  >
+                    {isBulkMode ? 'Cancel select' : 'Select'}
+                  </Button>
+                  <Button
+                    variant="light"
+                    color="blue"
+                    radius="xl"
+                    onClick={() => void refreshRecords()}
+                    loading={isRefreshingRecords}
+                    disabled={isBootstrapping}
+                  >
+                    Refresh
+                  </Button>
+                </Group>
               </div>
 
               <div className="records-layout">
@@ -5443,26 +5803,65 @@ function App() {
                         <Text size="sm" c="dimmed">
                           {filteredRecords.length} saved record
                           {filteredRecords.length === 1 ? '' : 's'}
+                          {pinnedRecordIds.size > 0 ? ` · ${pinnedRecordIds.size} pinned` : ''}
                         </Text>
                       </div>
-                      <Badge variant="light" color="blue">
-                        Latest first
-                      </Badge>
+                      {isBulkMode && bulkSelectedIds.size > 0 ? (
+                        <Group gap="xs">
+                          <Text size="sm" c="dimmed">{bulkSelectedIds.size} selected</Text>
+                          <Select
+                            placeholder="Move to status…"
+                            data={bootstrapData.statuses}
+                            size="xs"
+                            radius="xl"
+                            w={160}
+                            onChange={(value) => { if (value) void handleBulkStatusUpdate(value) }}
+                            disabled={isBulkUpdating}
+                          />
+                          {isBulkUpdating ? <Loader size="xs" /> : null}
+                        </Group>
+                      ) : null}
                     </Group>
 
                     {filteredRecords.length === 0 ? (
-                      <Text size="sm" c="dimmed">
-                        No records match the current filters.
-                      </Text>
+                      <div className="records-empty-state">
+                        <IconListDetails size={32} opacity={0.25} />
+                        <Text size="sm" c="dimmed" mt="xs">
+                          No records match the current filters.
+                        </Text>
+                        {hasActiveFilters ? (
+                          <Button
+                            variant="subtle"
+                            size="compact-sm"
+                            color="gray"
+                            mt="xs"
+                            onClick={() => setSharedFilters({ ...emptySharedFilters })}
+                          >
+                            Clear filters
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : (
                       <div className="records-list">
-                        {filteredRecords.map((record) => (
+                        {recordsListDisplay.map((record) => (
                           <div
                             key={record.id}
-                            className={`record-item ${
-                              selectedRecordId === record.id ? 'active' : ''
-                            }`}
+                            className={`record-item ${selectedRecordId === record.id ? 'active' : ''} ${pinnedRecordIds.has(record.id) ? 'pinned' : ''}`}
                           >
+                            {isBulkMode ? (
+                              <Checkbox
+                                className="record-bulk-checkbox"
+                                checked={bulkSelectedIds.has(record.id)}
+                                onChange={() => {
+                                  setBulkSelectedIds((current) => {
+                                    const next = new Set(current)
+                                    if (next.has(record.id)) next.delete(record.id)
+                                    else next.add(record.id)
+                                    return next
+                                  })
+                                }}
+                              />
+                            ) : null}
                             <button
                               type="button"
                               className="record-item-details"
@@ -5515,17 +5914,43 @@ function App() {
                                 </div>
                               </div>
                             </button>
-                            <Button
-                              type="button"
-                              variant="default"
-                              color="blue"
-                              radius="xl"
-                              size="compact-sm"
-                              className="record-edit-button"
-                              onClick={() => startEditingRecord(record)}
-                            >
-                              Edit
-                            </Button>
+                            {!isBulkMode ? (
+                              <Group gap={4} className="record-action-group">
+                                <Tooltip label={pinnedRecordIds.has(record.id) ? 'Unpin' : 'Pin to top'} position="top">
+                                  <ActionIcon
+                                    size="sm"
+                                    variant="subtle"
+                                    color={pinnedRecordIds.has(record.id) ? 'yellow' : 'gray'}
+                                    onClick={() => togglePinnedRecord(record.id)}
+                                  >
+                                    {pinnedRecordIds.has(record.id)
+                                      ? <IconStarFilled size={14} />
+                                      : <IconStar size={14} />}
+                                  </ActionIcon>
+                                </Tooltip>
+                                <Tooltip label="Duplicate" position="top">
+                                  <ActionIcon
+                                    size="sm"
+                                    variant="subtle"
+                                    color="gray"
+                                    onClick={() => duplicateRecord(record)}
+                                  >
+                                    <IconCopy size={14} />
+                                  </ActionIcon>
+                                </Tooltip>
+                                <Button
+                                  type="button"
+                                  variant="default"
+                                  color="blue"
+                                  radius="xl"
+                                  size="compact-sm"
+                                  className="record-edit-button"
+                                  onClick={() => startEditingRecord(record)}
+                                >
+                                  Edit
+                                </Button>
+                              </Group>
+                            ) : null}
                           </div>
                         ))}
                       </div>
@@ -6567,6 +6992,15 @@ function App() {
                         ? 'Copy failed'
                         : 'Copy to clipboard'}
                   </Button>
+                  <Button
+                    variant="default"
+                    radius="xl"
+                    leftSection={<IconPrinter size={16} />}
+                    onClick={() => window.print()}
+                    disabled={weeklyReportText.trim().length === 0}
+                  >
+                    Print / PDF
+                  </Button>
                 </Group>
               </div>
 
@@ -6669,7 +7103,7 @@ function App() {
                 </Stack>
               </Card>
 
-              <Card radius="xl" padding="lg" className="surface-card">
+              <Card radius="xl" padding="lg" className="surface-card weekly-print-region">
                 <Stack gap="md">
                   <Group justify="space-between" align="flex-start">
                     <div>

@@ -1281,6 +1281,78 @@
   letter-spacing: 0.06em;
 }
 
+/* ── Records empty state ──────────────────────────────────────── */
+.records-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+  color: var(--jira-text-muted);
+}
+
+/* ── Record list bulk checkbox ────────────────────────────────── */
+.record-bulk-checkbox {
+  display: flex;
+  align-items: center;
+  padding: 0 0.25rem;
+  flex-shrink: 0;
+}
+
+/* ── Record action group (star/copy/edit) ─────────────────────── */
+.record-action-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Pinned record highlight ──────────────────────────────────── */
+.record-item.pinned {
+  border-left: 2px solid #f08c00;
+}
+
+/* ── Template row ─────────────────────────────────────────────── */
+.template-row {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--jira-border);
+  background: var(--jira-surface);
+}
+
+/* ── Print: show only weekly digest ──────────────────────────── */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  .weekly-print-region,
+  .weekly-print-region * {
+    visibility: visible !important;
+  }
+
+  .weekly-print-region {
+    position: fixed !important;
+    inset: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 11pt !important;
+    padding: 2rem !important;
+  }
+
+  .weekly-print-region textarea {
+    border: none !important;
+    background: transparent !important;
+    resize: none !important;
+    font-family: inherit !important;
+    font-size: inherit !important;
+    white-space: pre-wrap !important;
+  }
+}
+
 /* ── Board card priority borders ─────────────────────────────── */
 .board-card {
   border-left-width: 3px !important;

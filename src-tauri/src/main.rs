@@ -2564,6 +2564,7 @@ fn validate_attachments(attachments: &[Attachment], subject: &str) -> Result<(),
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .manage(SaveLock(Mutex::new(())))
         .invoke_handler(tauri::generate_handler![
             bootstrap_form,
