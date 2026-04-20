@@ -27,6 +27,7 @@ struct BootstrapPayload {
     projects: Vec<String>,
     departments: Vec<String>,
     categories: Vec<String>,
+    category_impact_factors: BTreeMap<String, f64>,
     priorities: Vec<String>,
     efforts: Vec<String>,
     impacts: Vec<String>,
@@ -55,6 +56,8 @@ struct TrackerSettings {
     departments: Vec<String>,
     #[serde(default = "default_category_values")]
     categories: Vec<String>,
+    #[serde(default = "default_category_impact_factor_values")]
+    category_impact_factors: BTreeMap<String, f64>,
     #[serde(default = "default_priority_values")]
     priorities: Vec<String>,
     #[serde(default = "default_effort_values")]
@@ -279,6 +282,7 @@ fn bootstrap_form(app: AppHandle) -> Result<BootstrapPayload, String> {
         projects: database.settings.projects.clone(),
         departments: database.settings.departments.clone(),
         categories: database.settings.categories.clone(),
+        category_impact_factors: database.settings.category_impact_factors.clone(),
         priorities: database.settings.priorities.clone(),
         efforts: database.settings.efforts.clone(),
         impacts: database.settings.impacts.clone(),
@@ -580,6 +584,13 @@ fn default_category_values() -> Vec<String> {
     parse_embedded_list(include_str!("../resources/lists/categories.txt"))
 }
 
+fn default_category_impact_factor_values() -> BTreeMap<String, f64> {
+    default_category_values()
+        .into_iter()
+        .map(|category| (category, 1.0))
+        .collect()
+}
+
 fn default_priority_values() -> Vec<String> {
     vec!["Low".to_string(), "Mid".to_string(), "High".to_string()]
 }
@@ -629,6 +640,7 @@ fn default_tracker_settings() -> TrackerSettings {
         projects: default_project_values(),
         departments: default_department_values(),
         categories: default_category_values(),
+        category_impact_factors: default_category_impact_factor_values(),
         priorities: default_priority_values(),
         efforts: default_effort_values(),
         impacts: default_impact_values(),
@@ -1956,6 +1968,8 @@ fn sanitize_settings(mut settings: TrackerSettings) -> Result<TrackerSettings, S
     settings.projects = sanitize_string_list(settings.projects);
     settings.departments = sanitize_string_list(settings.departments);
     settings.categories = sanitize_string_list(settings.categories);
+    settings.category_impact_factors =
+        sanitize_category_impact_factors(&settings.categories, settings.category_impact_factors)?;
     settings.priorities = sanitize_string_list(settings.priorities);
     settings.efforts = sanitize_string_list(settings.efforts);
     settings.impacts = sanitize_string_list(settings.impacts);
@@ -1983,6 +1997,27 @@ fn sanitize_settings(mut settings: TrackerSettings) -> Result<TrackerSettings, S
     }
 
     Ok(settings)
+}
+
+fn sanitize_category_impact_factors(
+    categories: &[String],
+    factors: BTreeMap<String, f64>,
+) -> Result<BTreeMap<String, f64>, String> {
+    let mut sanitized = BTreeMap::new();
+
+    for category in categories {
+        let factor = factors.get(category).copied().unwrap_or(1.0);
+        if !factor.is_finite() || !(0.0..=2.0).contains(&factor) {
+            return Err(format!(
+                "Impact factor for category '{}' must be a number between 0 and 2.",
+                category
+            ));
+        }
+
+        sanitized.insert(category.clone(), factor);
+    }
+
+    Ok(sanitized)
 }
 
 fn sanitize_reminder_cadence_options(

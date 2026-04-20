@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-latest
+            bundles: app
+          - name: windows
+            os: windows-latest
+            bundles: msi,nsis
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build native bundle
+        run: npm run tauri -- build --bundles ${{ matrix.bundles }}
+
+      - name: Prepare release artifacts
+        shell: bash
+        run: |
+          mkdir -p release
+          if [ "${{ matrix.name }}" = "macos" ]; then
+            ditto -c -k --sequesterRsrc --keepParent \
+              src-tauri/target/release/bundle/macos/Tracker.app \
+              "release/Tracker_${GITHUB_REF_NAME}_${{ matrix.name }}_${RUNNER_ARCH}.zip"
+          else
+            find src-tauri/target/release/bundle -type f \( -name '*.msi' -o -name '*.exe' \) -exec cp {} release/ \;
+          fi
+
+      - name: Upload release candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tracker-${{ matrix.name }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Create release notes
+        run: |
+          cat > release-notes.md <<'NOTES'
+          Tracker desktop release.
+
+          Installers are built by GitHub Actions on native macOS and Windows runners.
+
+          macOS: download the DMG or app bundle artifact.
+          Windows: download the MSI or EXE installer artifact.
+          NOTES
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG_NAME" >/dev/null 2>&1 || gh release create "$TAG_NAME" --title "Tracker $TAG_NAME" --notes-file release-notes.md
+          find release-assets -type f -print0 | xargs -0 gh release upload "$TAG_NAME" --clobber

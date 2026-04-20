@@ -107,6 +107,7 @@ dayjs.extend(isoWeek)
 type PageKey = 'overview' | 'form' | 'records' | 'board' | 'insights' | 'weekly' | 'admin'
 type WeeklyReportMode = 'week' | 'range'
 type WeeklyTemplate = 'bullets' | 'executive' | 'owner' | 'project'
+type HeatmapValueMode = 'count' | 'percent'
 type SavedView = {
   id: string
   name: string
@@ -409,6 +410,106 @@ function buildHeatmap(records: ActivityRecord[], efforts: string[], impacts: str
   return cells
 }
 
+function formatImpactFactor(value: number) {
+  if (!Number.isFinite(value)) {
+    return '1'
+  }
+
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+function normalizeCategoryImpactFactors(
+  categories: string[],
+  factors: Record<string, number>,
+) {
+  const normalized: Record<string, number> = {}
+
+  for (const category of categories) {
+    const factor = factors[category]
+    normalized[category] = Number.isFinite(factor)
+      ? Math.min(2, Math.max(0, factor))
+      : 1
+  }
+
+  return normalized
+}
+
+function parseCategoryImpactFactor(value: string) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 2 ? parsed : null
+}
+
+function categoriesImpactFactor(
+  categories: string[],
+  factors: Record<string, number>,
+) {
+  const selectedFactors = categories.map((category) => factors[category] ?? 1)
+
+  if (selectedFactors.length === 0) {
+    return 1
+  }
+
+  return Math.max(...selectedFactors)
+}
+
+function recordCategoryImpactFactor(
+  record: ActivityRecord,
+  factors: Record<string, number>,
+) {
+  return categoriesImpactFactor(record.categories, factors)
+}
+
+function buildMonthlyOpenActivityBuckets(
+  records: ActivityRecord[],
+  factors: Record<string, number>,
+  weighted = false,
+) {
+  if (records.length === 0) {
+    return []
+  }
+
+  const starts = records.map((record) => dayjs(record.startDate))
+  const ends = records.map((record) => dayjs(record.endDate))
+  const firstMonth = starts
+    .reduce((earliest, value) => (value.isBefore(earliest) ? value : earliest), starts[0])
+    .startOf('month')
+  const lastMonth = ends
+    .reduce((latest, value) => (value.isAfter(latest) ? value : latest), ends[0])
+    .startOf('month')
+  const buckets: InsightBucket[] = []
+
+  for (
+    let cursor = firstMonth;
+    cursor.isBefore(lastMonth) || cursor.isSame(lastMonth, 'month');
+    cursor = cursor.add(1, 'month')
+  ) {
+    const monthStart = cursor.startOf('month')
+    const monthEnd = cursor.endOf('month')
+    const openRecords = records.filter((record) => {
+      const recordStart = dayjs(record.startDate).startOf('day')
+      const recordEnd = dayjs(record.endDate).endOf('day')
+
+      return (
+        !recordStart.isAfter(monthEnd, 'day') &&
+        !recordEnd.isBefore(monthStart, 'day')
+      )
+    })
+    const value = weighted
+      ? openRecords.reduce(
+          (sum, record) => sum + recordCategoryImpactFactor(record, factors),
+          0,
+        )
+      : openRecords.length
+
+    buckets.push({
+      label: cursor.format('MMM YYYY'),
+      value: Number(value.toFixed(1)),
+    })
+  }
+
+  return buckets
+}
+
 const settingsFieldDefinitions: Array<{
   key: SettingsFieldKey
   label: string
@@ -490,6 +591,10 @@ function settingsFromBootstrap(bootstrap: BootstrapPayload): TrackerSettings {
     projects: [...bootstrap.projects],
     departments: [...bootstrap.departments],
     categories: [...bootstrap.categories],
+    categoryImpactFactors: normalizeCategoryImpactFactors(
+      bootstrap.categories,
+      bootstrap.categoryImpactFactors,
+    ),
     priorities: [...bootstrap.priorities],
     efforts: [...bootstrap.efforts],
     impacts: [...bootstrap.impacts],
@@ -508,6 +613,10 @@ function buildDatabaseDocument(
       projects: [...settings.projects],
       departments: [...settings.departments],
       categories: [...settings.categories],
+      categoryImpactFactors: normalizeCategoryImpactFactors(
+        settings.categories,
+        settings.categoryImpactFactors,
+      ),
       priorities: [...settings.priorities],
       efforts: [...settings.efforts],
       impacts: [...settings.impacts],
@@ -1043,31 +1152,82 @@ function RankedPlot({
   )
 }
 
+function heatmapCellTone(
+  effort: string,
+  impact: string,
+  efforts: string[],
+  impacts: string[],
+  intensity: number,
+) {
+  const effortScore = efforts.indexOf(effort)
+  const impactScore = impacts.indexOf(impact)
+  const tradeoffScore = impactScore - effortScore
+  const opacityBoost = intensity * 0.18
+
+  if (tradeoffScore > 0) {
+    return {
+      background: `rgba(34, 139, 82, ${0.14 + tradeoffScore * 0.11 + opacityBoost})`,
+      borderColor: `rgba(34, 139, 82, ${0.28 + tradeoffScore * 0.12 + opacityBoost})`,
+    }
+  }
+
+  if (tradeoffScore < 0) {
+    const risk = Math.abs(tradeoffScore)
+
+    return {
+      background: `rgba(213, 59, 43, ${0.12 + risk * 0.12 + opacityBoost})`,
+      borderColor: `rgba(213, 59, 43, ${0.24 + risk * 0.14 + opacityBoost})`,
+    }
+  }
+
+  return {
+    background: `rgba(129, 139, 152, ${0.12 + opacityBoost})`,
+    borderColor: `rgba(129, 139, 152, ${0.28 + opacityBoost})`,
+  }
+}
+
 function HeatmapPlot({
   title,
   subtitle,
   cells,
   efforts,
   impacts,
+  valueMode,
+  onValueModeChange,
 }: {
   title: string
   subtitle: string
   cells: HeatmapCell[]
   efforts: string[]
   impacts: string[]
+  valueMode: HeatmapValueMode
+  onValueModeChange: (value: HeatmapValueMode) => void
 }) {
   const maxValue = cells.reduce((current, item) => Math.max(current, item.value), 0)
+  const totalValue = cells.reduce((sum, item) => sum + item.value, 0)
   const orderedEfforts = [...efforts].reverse()
 
   return (
     <Card radius="xl" padding="lg" className="surface-card">
       <Stack gap="md">
-        <div>
-          <Text fw={700}>{title}</Text>
-          <Text size="sm" c="dimmed">
-            {subtitle}
-          </Text>
-        </div>
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Text fw={700}>{title}</Text>
+            <Text size="sm" c="dimmed">
+              {subtitle}
+            </Text>
+          </div>
+          <SegmentedControl
+            size="xs"
+            radius="xl"
+            data={[
+              { value: 'count', label: 'Count' },
+              { value: 'percent', label: '%' },
+            ]}
+            value={valueMode}
+            onChange={(value) => onValueModeChange(value as HeatmapValueMode)}
+          />
+        </Group>
 
         <div className="heatmap-wrap">
           <div className="heatmap-header">
@@ -1090,17 +1250,27 @@ function HeatmapPlot({
                       (entry) => entry.effort === effort && entry.impact === impact,
                     ) ?? { effort, impact, value: 0 }
                   const intensity = maxValue === 0 ? 0 : cell.value / maxValue
+                  const cellTone = heatmapCellTone(
+                    effort,
+                    impact,
+                    efforts,
+                    impacts,
+                    intensity,
+                  )
+                  const cellLabel =
+                    valueMode === 'percent'
+                      ? `${formatMetricNumber(
+                          totalValue === 0 ? 0 : (cell.value / totalValue) * 100,
+                        )}%`
+                      : cell.value
 
                   return (
                     <div
                       key={`${effort}-${impact}`}
                       className="heatmap-cell"
-                      style={{
-                        background: `rgba(12, 102, 228, ${0.08 + intensity * 0.4})`,
-                        borderColor: `rgba(12, 102, 228, ${0.18 + intensity * 0.32})`,
-                      }}
+                      style={cellTone}
                     >
-                      <strong>{cell.value}</strong>
+                      <strong>{cellLabel}</strong>
                     </div>
                   )
                 })}
@@ -1293,6 +1463,230 @@ function AdminTextListEditor({
             Add
           </Button>
         </div>
+      </Stack>
+    </Card>
+  )
+}
+
+function AdminCategoryImpactEditor({
+  value,
+  factors,
+  onChange,
+  onFactorsChange,
+}: {
+  value: string
+  factors: Record<string, number>
+  onChange: (value: string) => void
+  onFactorsChange: (value: Record<string, number>) => void
+}) {
+  const [newValue, setNewValue] = useState('')
+  const [newFactor, setNewFactor] = useState('1')
+  const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [editingValue, setEditingValue] = useState('')
+  const [editingFactor, setEditingFactor] = useState('1')
+  const items = uniqueTrimmedLines(value)
+  const normalizedFactors = normalizeCategoryImpactFactors(items, factors)
+
+  function commitItems(nextItems: string[], nextFactors: Record<string, number>) {
+    onChange(serializeStringLines(nextItems))
+    onFactorsChange(normalizeCategoryImpactFactors(nextItems, nextFactors))
+  }
+
+  function handleAddItem() {
+    const category = newValue.trim()
+    const factor = parseCategoryImpactFactor(newFactor)
+    if (!category || factor === null) {
+      return
+    }
+
+    commitItems([...items, category], { ...normalizedFactors, [category]: factor })
+    setNewValue('')
+    setNewFactor('1')
+  }
+
+  function handleStartEdit(index: number, item: string) {
+    setEditingIndex(index)
+    setEditingValue(item)
+    setEditingFactor(formatImpactFactor(normalizedFactors[item] ?? 1))
+  }
+
+  function handleSaveEdit(index: number) {
+    const category = editingValue.trim()
+    const factor = parseCategoryImpactFactor(editingFactor)
+    if (!category || factor === null) {
+      return
+    }
+
+    const previousCategory = items[index]
+    const nextItems = items.map((item, itemIndex) =>
+      itemIndex === index ? category : item,
+    )
+    const nextFactors = { ...normalizedFactors }
+    delete nextFactors[previousCategory]
+    nextFactors[category] = factor
+    commitItems(nextItems, nextFactors)
+    setEditingIndex(null)
+    setEditingValue('')
+    setEditingFactor('1')
+  }
+
+  function handleRemoveItem(index: number) {
+    const removedCategory = items[index]
+    const nextItems = items.filter((_, itemIndex) => itemIndex !== index)
+    const nextFactors = { ...normalizedFactors }
+    delete nextFactors[removedCategory]
+    commitItems(nextItems, nextFactors)
+    if (editingIndex === index) {
+      setEditingIndex(null)
+      setEditingValue('')
+      setEditingFactor('1')
+    }
+  }
+
+  return (
+    <Card radius="xl" padding="lg" className="surface-card admin-list-card">
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Text fw={700}>Categories</Text>
+            <Text size="sm" c="dimmed">
+              Activity types used by records, with a weighting factor for Insights.
+            </Text>
+          </div>
+          <Badge variant="light" color="blue" radius="xl">
+            {items.length} type{items.length === 1 ? '' : 's'}
+          </Badge>
+        </Group>
+
+        <div className="admin-item-list">
+          {items.length === 0 ? (
+            <Text size="sm" c="dimmed">
+              No categories yet. Add the first activity type below.
+            </Text>
+          ) : (
+            items.map((item, index) => (
+              <div className="admin-item-row" key={`category-${item}-${index}`}>
+                {editingIndex === index ? (
+                  <div className="admin-reminder-edit">
+                    <TextInput
+                      label="Category"
+                      value={editingValue}
+                      onChange={(event) => setEditingValue(event.currentTarget.value)}
+                      autoFocus
+                    />
+                    <TextInput
+                      label="Impact factor"
+                      type="number"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={editingFactor}
+                      onChange={(event) => setEditingFactor(event.currentTarget.value)}
+                    />
+                  </div>
+                ) : (
+                  <div className="admin-item-content">
+                    <Text fw={700}>{item}</Text>
+                    <Text size="xs" c="dimmed">
+                      Impact factor {formatImpactFactor(normalizedFactors[item] ?? 1)}
+                    </Text>
+                  </div>
+                )}
+
+                <Group gap="xs" className="admin-item-actions">
+                  {editingIndex === index ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="light"
+                        color="green"
+                        radius="xl"
+                        size="compact-sm"
+                        leftSection={<IconCheck size={14} />}
+                        onClick={() => handleSaveEdit(index)}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        color="gray"
+                        radius="xl"
+                        size="compact-sm"
+                        leftSection={<IconX size={14} />}
+                        onClick={() => {
+                          setEditingIndex(null)
+                          setEditingValue('')
+                          setEditingFactor('1')
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        color="blue"
+                        radius="xl"
+                        size="compact-sm"
+                        leftSection={<IconEdit size={14} />}
+                        onClick={() => handleStartEdit(index, item)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        color="red"
+                        radius="xl"
+                        size="compact-sm"
+                        leftSection={<IconTrash size={14} />}
+                        onClick={() => handleRemoveItem(index)}
+                      >
+                        Remove
+                      </Button>
+                    </>
+                  )}
+                </Group>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="admin-add-row admin-add-row-wide">
+          <TextInput
+            label="Add category"
+            placeholder="New activity type"
+            value={newValue}
+            onChange={(event) => setNewValue(event.currentTarget.value)}
+          />
+          <TextInput
+            label="Impact factor"
+            type="number"
+            min={0}
+            max={2}
+            step={0.1}
+            value={newFactor}
+            onChange={(event) => setNewFactor(event.currentTarget.value)}
+          />
+          <Button
+            type="button"
+            radius="xl"
+            variant="light"
+            color="blue"
+            onClick={handleAddItem}
+            disabled={!newValue.trim() || parseCategoryImpactFactor(newFactor) === null}
+          >
+            Add
+          </Button>
+        </div>
+
+        <Text size="xs" c="dimmed">
+          Use 1 as neutral weight. Values below 1 reduce weighted open activity;
+          values above 1 increase it.
+        </Text>
       </Stack>
     </Card>
   )
@@ -1550,6 +1944,8 @@ function App() {
   const [draggingRecordId, setDraggingRecordId] = useState<string | null>(null)
   const [isFiltersCollapsed, setIsFiltersCollapsed] = useState(true)
   const [showCompletedColumn, setShowCompletedColumn] = useState(false)
+  const [heatmapValueMode, setHeatmapValueMode] =
+    useState<HeatmapValueMode>('count')
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [importExportMessage, setImportExportMessage] = useState<string | null>(null)
   const [databaseBackups, setDatabaseBackups] = useState<DatabaseBackup[]>([])
@@ -1570,6 +1966,12 @@ function App() {
   )
   const [categoriesDraft, setCategoriesDraft] = useState(
     serializeStringLines(fallbackBootstrap.categories),
+  )
+  const [categoryImpactFactorsDraft, setCategoryImpactFactorsDraft] = useState(
+    normalizeCategoryImpactFactors(
+      fallbackBootstrap.categories,
+      fallbackBootstrap.categoryImpactFactors,
+    ),
   )
   const [prioritiesDraft, setPrioritiesDraft] = useState(
     serializeStringLines(fallbackBootstrap.priorities),
@@ -1665,6 +2067,17 @@ function App() {
         value.length <= 10 ? null : 'Attach up to 10 files per record',
     },
   })
+  const selectedCategoryImpactFactor =
+    form.values.categories.length === 0
+      ? null
+      : categoriesImpactFactor(
+          form.values.categories,
+          bootstrapData.categoryImpactFactors,
+        )
+  const selectedCategoryImpactDetails = form.values.categories.map((category) => ({
+    category,
+    factor: bootstrapData.categoryImpactFactors[category] ?? 1,
+  }))
 
   async function appendAttachments(nextAttachments: AttachmentPayload[]) {
     if (nextAttachments.length === 0) {
@@ -1895,6 +2308,15 @@ function App() {
     }))
   const filteredInsightRecords = filteredRecords
   const insightTimeline = buildMonthlyBuckets(filteredInsightRecords)
+  const insightOpenActivitiesByMonth = buildMonthlyOpenActivityBuckets(
+    filteredInsightRecords,
+    bootstrapData.categoryImpactFactors,
+  )
+  const insightWeightedOpenActivitiesByMonth = buildMonthlyOpenActivityBuckets(
+    filteredInsightRecords,
+    bootstrapData.categoryImpactFactors,
+    true,
+  )
   const insightOwnerBuckets = countSingleValues(
     filteredInsightRecords,
     (record) => record.owner,
@@ -2179,6 +2601,12 @@ function App() {
     setProjectsDraft(serializeStringLines(nextBootstrap.projects))
     setDepartmentsDraft(serializeStringLines(nextBootstrap.departments))
     setCategoriesDraft(serializeStringLines(nextBootstrap.categories))
+    setCategoryImpactFactorsDraft(
+      normalizeCategoryImpactFactors(
+        nextBootstrap.categories,
+        nextBootstrap.categoryImpactFactors,
+      ),
+    )
     setPrioritiesDraft(serializeStringLines(nextBootstrap.priorities))
     setEffortsDraft(serializeStringLines(nextBootstrap.efforts))
     setImpactsDraft(serializeStringLines(nextBootstrap.impacts))
@@ -3026,11 +3454,17 @@ function App() {
       return null
     }
 
+    const categories = uniqueTrimmedLines(categoriesDraft)
+
     return {
       owners: uniqueTrimmedLines(ownersDraft),
       projects: uniqueTrimmedLines(projectsDraft),
       departments: uniqueTrimmedLines(departmentsDraft),
-      categories: uniqueTrimmedLines(categoriesDraft),
+      categories,
+      categoryImpactFactors: normalizeCategoryImpactFactors(
+        categories,
+        categoryImpactFactorsDraft,
+      ),
       priorities: uniqueTrimmedLines(prioritiesDraft),
       efforts: uniqueTrimmedLines(effortsDraft),
       impacts: uniqueTrimmedLines(impactsDraft),
@@ -3059,7 +3493,11 @@ function App() {
     setOwnersDraft(Array.from(draftLinesByField.get('owners') ?? []).join('\n'))
     setProjectsDraft(Array.from(draftLinesByField.get('projects') ?? []).join('\n'))
     setDepartmentsDraft(Array.from(draftLinesByField.get('departments') ?? []).join('\n'))
-    setCategoriesDraft(Array.from(draftLinesByField.get('categories') ?? []).join('\n'))
+    const restoredCategories = Array.from(draftLinesByField.get('categories') ?? [])
+    setCategoriesDraft(restoredCategories.join('\n'))
+    setCategoryImpactFactorsDraft((current) =>
+      normalizeCategoryImpactFactors(restoredCategories, current),
+    )
     setPrioritiesDraft(Array.from(draftLinesByField.get('priorities') ?? []).join('\n'))
     setEffortsDraft(Array.from(draftLinesByField.get('efforts') ?? []).join('\n'))
     setImpactsDraft(Array.from(draftLinesByField.get('impacts') ?? []).join('\n'))
@@ -4632,6 +5070,35 @@ function App() {
                   {...form.getInputProps('categories')}
                 />
 
+                {selectedCategoryImpactFactor !== null ? (
+                  <div className="category-impact-panel">
+                    <Group justify="space-between" align="flex-start">
+                      <div>
+                        <Text fw={700}>Selected activity type weight</Text>
+                        <Text size="sm" c="dimmed">
+                          Weighted Insights use the highest factor when multiple
+                          categories are selected.
+                        </Text>
+                      </div>
+                      <Badge variant="light" color="green" radius="xl">
+                        {formatImpactFactor(selectedCategoryImpactFactor)}x
+                      </Badge>
+                    </Group>
+                    <div className="category-impact-list">
+                      {selectedCategoryImpactDetails.map((entry) => (
+                        <Badge
+                          key={entry.category}
+                          variant="light"
+                          color="blue"
+                          radius="xl"
+                        >
+                          {entry.category}: {formatImpactFactor(entry.factor)}x
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div>
                   <InputLabel required mb={8}>
                     Attachments
@@ -5813,12 +6280,24 @@ function App() {
                   subtitle="How many activities were submitted each month"
                   data={insightTimeline}
                 />
+                <TimelinePlot
+                  title="Average open activities"
+                  subtitle="Activities whose active date range overlaps each month"
+                  data={insightOpenActivitiesByMonth}
+                />
+                <TimelinePlot
+                  title="Weighted open activities"
+                  subtitle="Open activity load multiplied by Admin activity-type factors"
+                  data={insightWeightedOpenActivitiesByMonth}
+                />
                 <HeatmapPlot
                   title="Effort vs impact"
                   subtitle="Where the current workload sits in the effort-impact matrix"
                   cells={insightHeatmap}
                   efforts={bootstrapData.efforts}
                   impacts={bootstrapData.impacts}
+                  valueMode={heatmapValueMode}
+                  onValueModeChange={setHeatmapValueMode}
                 />
                 <RankedPlot
                   title="Top owners"
@@ -6046,6 +6525,12 @@ function App() {
                       setProjectsDraft(serializeStringLines(bootstrapData.projects))
                       setDepartmentsDraft(serializeStringLines(bootstrapData.departments))
                       setCategoriesDraft(serializeStringLines(bootstrapData.categories))
+                      setCategoryImpactFactorsDraft(
+                        normalizeCategoryImpactFactors(
+                          bootstrapData.categories,
+                          bootstrapData.categoryImpactFactors,
+                        ),
+                      )
                       setPrioritiesDraft(serializeStringLines(bootstrapData.priorities))
                       setEffortsDraft(serializeStringLines(bootstrapData.efforts))
                       setImpactsDraft(serializeStringLines(bootstrapData.impacts))
@@ -6112,12 +6597,11 @@ function App() {
                   value={departmentsDraft}
                   onChange={setDepartmentsDraft}
                 />
-                <AdminTextListEditor
-                  title="Categories"
-                  singularLabel="Category"
-                  description="Classification tags used by records and filters."
+                <AdminCategoryImpactEditor
                   value={categoriesDraft}
+                  factors={categoryImpactFactorsDraft}
                   onChange={setCategoriesDraft}
+                  onFactorsChange={setCategoryImpactFactorsDraft}
                 />
                 <AdminTextListEditor
                   title="Priorities"

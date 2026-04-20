@@ -35,6 +35,12 @@ export const defaultTrackerSettings: TrackerSettings = {
   ],
   departments: ['Engineering', 'Operations', 'Finance', 'Customer Success'],
   categories: ['Automation', 'Reporting', 'Release', 'Research'],
+  categoryImpactFactors: {
+    Automation: 1,
+    Reporting: 1,
+    Release: 1,
+    Research: 1,
+  },
   priorities: ['Low', 'Mid', 'High'],
   efforts: ['Low', 'Mid', 'High'],
   impacts: ['Low', 'Mid', 'High'],

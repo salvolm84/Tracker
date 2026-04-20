@@ -8,6 +8,7 @@ export interface TrackerSettings {
   projects: string[]
   departments: string[]
   categories: string[]
+  categoryImpactFactors: Record<string, number>
   priorities: string[]
   efforts: string[]
   impacts: string[]
@@ -20,6 +21,7 @@ export interface BootstrapPayload {
   projects: string[]
   departments: string[]
   categories: string[]
+  categoryImpactFactors: Record<string, number>
   priorities: string[]
   efforts: string[]
   impacts: string[]
