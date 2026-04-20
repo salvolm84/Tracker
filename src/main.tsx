@@ -1,7 +1,9 @@
 import '@mantine/core/styles.css'
 import '@mantine/dates/styles.css'
+import '@mantine/notifications/styles.css'
 import { StrictMode } from 'react'
 import { createTheme, MantineProvider } from '@mantine/core'
+import { Notifications } from '@mantine/notifications'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
@@ -27,6 +29,7 @@ const theme = createTheme({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <MantineProvider theme={theme} defaultColorScheme="light">
+      <Notifications position="bottom-right" limit={4} />
       <App />
     </MantineProvider>
   </StrictMode>,

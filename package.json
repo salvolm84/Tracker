@@ -19,6 +19,7 @@
     "@mantine/dates": "^8.3.9",
     "@mantine/form": "^8.3.9",
     "@mantine/hooks": "^8.3.9",
+    "@mantine/notifications": "^9.0.2",
     "@tabler/icons-react": "^3.35.0",
     "@tauri-apps/api": "^2.8.0",
     "dayjs": "^1.11.19",

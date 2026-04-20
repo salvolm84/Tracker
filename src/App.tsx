@@ -15,14 +15,17 @@ import {
   Select,
   SegmentedControl,
   SimpleGrid,
+  Skeleton,
   Stack,
   Text,
   TextInput,
   Textarea,
   ThemeIcon,
   Title,
+  Tooltip,
   useMantineColorScheme,
 } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
 import { DateInput } from '@mantine/dates'
 import { useForm } from '@mantine/form'
 import {
@@ -36,6 +39,7 @@ import {
   IconDatabase,
   IconEdit,
   IconFileDescription,
+  IconHelp,
   IconPaperclip,
   IconFolders,
   IconLayoutDashboard,
@@ -1899,6 +1903,7 @@ function App() {
   const currentIsoWeekEnd = dayjs().endOf('isoWeek')
   const [currentPage, setCurrentPage] = useState<PageKey>('overview')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false)
   const [bootstrapData, setBootstrapData] =
     useState<BootstrapPayload>(fallbackBootstrap)
   const [stats, setStats] = useState<DatabaseStats>(fallbackStats)
@@ -2698,6 +2703,12 @@ function App() {
       return
     }
 
+    if (event.key === '?') {
+      event.preventDefault()
+      setIsShortcutsModalOpen((current) => !current)
+      return
+    }
+
     if (/^[1-7]$/.test(event.key)) {
       const nextPage = orderedPages[Number(event.key) - 1]
       if (nextPage) {
@@ -2716,7 +2727,7 @@ function App() {
       : 0
     const safeIndex = currentIndex >= 0 ? currentIndex : 0
 
-    if (event.key === 'j') {
+    if (event.key === 'j' || event.key === 'ArrowDown') {
       event.preventDefault()
       const nextRecord =
         filteredRecords[Math.min(safeIndex + 1, filteredRecords.length - 1)]
@@ -2726,7 +2737,7 @@ function App() {
       return
     }
 
-    if (event.key === 'k') {
+    if (event.key === 'k' || event.key === 'ArrowUp') {
       event.preventDefault()
       const previousRecord = filteredRecords[Math.max(safeIndex - 1, 0)]
       if (previousRecord) {
@@ -3057,10 +3068,18 @@ function App() {
         setStatusTone('success')
         setStatusMessage(
           editingRecordId
-            ? 'Activity updated successfully. Record details and overview statistics have been refreshed.'
-            : 'Activity saved successfully. Overview statistics have been refreshed.',
+            ? 'Activity updated successfully.'
+            : 'Activity saved successfully.',
         )
         setCurrentPage(editingRecordId ? 'records' : 'overview')
+        notifications.show({
+          color: 'teal',
+          title: editingRecordId ? 'Activity updated' : 'Activity saved',
+          message: editingRecordId
+            ? 'Record has been updated in the database.'
+            : 'New record appended to the database.',
+          autoClose: 4000,
+        })
       })
 
       await refreshStats({ silent: true })
@@ -3082,6 +3101,12 @@ function App() {
       startTransition(() => {
         setStatusTone('error')
         setStatusMessage(message)
+        notifications.show({
+          color: 'red',
+          title: 'Save failed',
+          message,
+          autoClose: 6000,
+        })
       })
     } finally {
       setIsSaving(false)
@@ -3119,9 +3144,13 @@ function App() {
           recordCount: result.recordCount,
         }))
         setStatusTone('success')
-        setStatusMessage(
-          'Comment added successfully. The selected record history has been refreshed.',
-        )
+        setStatusMessage('Comment added successfully.')
+        notifications.show({
+          color: 'teal',
+          title: 'Comment added',
+          message: 'Comment has been saved to the record.',
+          autoClose: 3000,
+        })
       })
 
       await refreshRecords({ silent: true })
@@ -3139,6 +3168,12 @@ function App() {
       startTransition(() => {
         setStatusTone('error')
         setStatusMessage(message)
+        notifications.show({
+          color: 'red',
+          title: 'Comment failed',
+          message,
+          autoClose: 6000,
+        })
       })
     } finally {
       setIsSavingComment(false)
@@ -3187,7 +3222,13 @@ function App() {
           recordCount: result.recordCount,
         }))
         setStatusTone('success')
-        setStatusMessage('Comment updated successfully.')
+        setStatusMessage('Comment updated.')
+        notifications.show({
+          color: 'teal',
+          title: 'Comment updated',
+          message: 'Your edit has been saved.',
+          autoClose: 3000,
+        })
       })
 
       await refreshRecords({ silent: true })
@@ -3204,6 +3245,12 @@ function App() {
       startTransition(() => {
         setStatusTone('error')
         setStatusMessage(message)
+        notifications.show({
+          color: 'red',
+          title: 'Comment update failed',
+          message,
+          autoClose: 6000,
+        })
       })
     } finally {
       setIsSavingComment(false)
@@ -3242,7 +3289,13 @@ function App() {
           recordCount: result.recordCount,
         }))
         setStatusTone('success')
-        setStatusMessage('Comment deleted successfully.')
+        setStatusMessage('Comment deleted.')
+        notifications.show({
+          color: 'teal',
+          title: 'Comment deleted',
+          message: 'The comment has been removed from the record.',
+          autoClose: 3000,
+        })
       })
 
       await refreshRecords({ silent: true })
@@ -3261,6 +3314,12 @@ function App() {
       startTransition(() => {
         setStatusTone('error')
         setStatusMessage(message)
+        notifications.show({
+          color: 'red',
+          title: 'Delete failed',
+          message,
+          autoClose: 6000,
+        })
       })
     } finally {
       setIsDeletingCommentId(null)
@@ -3291,6 +3350,12 @@ function App() {
         }))
         setStatusTone('success')
         setStatusMessage(successMessage)
+        notifications.show({
+          color: 'teal',
+          title: 'Record updated',
+          message: successMessage,
+          autoClose: 3000,
+        })
       })
 
       await refreshRecords({ silent: true })
@@ -3307,6 +3372,12 @@ function App() {
       startTransition(() => {
         setStatusTone('error')
         setStatusMessage(message)
+        notifications.show({
+          color: 'red',
+          title: 'Update failed',
+          message,
+          autoClose: 6000,
+        })
       })
     } finally {
       setIsQuickSaving(false)
@@ -4010,6 +4081,51 @@ function App() {
         </Stack>
       </Modal>
 
+      <Modal
+        opened={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
+        title="Keyboard shortcuts"
+        centered
+        size="md"
+      >
+        <Stack gap="md">
+          <div className="shortcut-list">
+            <Text size="sm" fw={700} c="dimmed" mb={4}>Navigation</Text>
+            <div className="shortcut-row">
+              <Text size="sm" c="dimmed">Switch pages</Text>
+              <span className="kbd-group">
+                {orderedPages.map((page) => (
+                  <kbd className="kbd-hint" key={page}>{pageShortcutMap[page]}</kbd>
+                ))}
+              </span>
+            </div>
+            <div className="shortcut-row">
+              <Text size="sm" c="dimmed">Open shortcuts help</Text>
+              <kbd className="kbd-hint">?</kbd>
+            </div>
+            <Text size="sm" fw={700} c="dimmed" mt="sm" mb={4}>Records page</Text>
+            <div className="shortcut-row">
+              <Text size="sm" c="dimmed">Next record</Text>
+              <span className="kbd-group">
+                <kbd className="kbd-hint">J</kbd>
+                <kbd className="kbd-hint">↓</kbd>
+              </span>
+            </div>
+            <div className="shortcut-row">
+              <Text size="sm" c="dimmed">Previous record</Text>
+              <span className="kbd-group">
+                <kbd className="kbd-hint">K</kbd>
+                <kbd className="kbd-hint">↑</kbd>
+              </span>
+            </div>
+            <div className="shortcut-row">
+              <Text size="sm" c="dimmed">Edit selected record</Text>
+              <kbd className="kbd-hint">E</kbd>
+            </div>
+          </div>
+        </Stack>
+      </Modal>
+
       <div
         className={`workspace-grid ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
       >
@@ -4045,110 +4161,133 @@ function App() {
             </div>
 
             <div className="page-nav">
-              <button
-                type="button"
-                className={`page-link ${currentPage === 'overview' ? 'active' : ''}`}
-                onClick={() => setCurrentPage('overview')}
-              >
-                <span className="page-link-icon">
-                  <IconLayoutDashboard size={18} />
-                </span>
-                <span>
-                  <strong>Overview</strong>
-                  <small>Workspace summary</small>
-                </span>
-                <span className="page-link-shortcut">1</span>
-              </button>
+              <Tooltip label="Overview — Workspace summary" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'overview' ? 'active' : ''}`}
+                  onClick={() => setCurrentPage('overview')}
+                >
+                  <span className="page-link-icon">
+                    <IconLayoutDashboard size={18} />
+                  </span>
+                  <span>
+                    <strong>Overview</strong>
+                    <small>Workspace summary</small>
+                  </span>
+                  <span className="page-link-shortcut">1</span>
+                </button>
+              </Tooltip>
 
-              <button
-                type="button"
-                className={`page-link ${currentPage === 'form' ? 'active' : ''}`}
-                onClick={() => setCurrentPage('form')}
-              >
-                <span className="page-link-icon">
-                  <IconClipboardText size={18} />
-                </span>
-                <span>
-                  <strong>Tracker Form</strong>
-                  <small>Capture new work</small>
-                </span>
-                <span className="page-link-shortcut">2</span>
-              </button>
+              <Tooltip label="Tracker Form — Capture new work" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'form' ? 'active' : ''}`}
+                  onClick={() => setCurrentPage('form')}
+                >
+                  <span className="page-link-icon">
+                    <IconClipboardText size={18} />
+                  </span>
+                  <span>
+                    <strong>Tracker Form</strong>
+                    <small>Capture new work</small>
+                  </span>
+                  <span className="page-link-shortcut">2</span>
+                </button>
+              </Tooltip>
 
-              <button
-                type="button"
-                className={`page-link ${currentPage === 'records' ? 'active' : ''}`}
-                onClick={() => setCurrentPage('records')}
-              >
-                <span className="page-link-icon">
-                  <IconListDetails size={18} />
-                </span>
-                <span>
-                  <strong>Records</strong>
-                  <small>Browse saved work</small>
-                </span>
-                <span className="page-link-shortcut">3</span>
-              </button>
+              <Tooltip label="Records — Browse saved work" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'records' ? 'active' : ''}`}
+                  onClick={() => setCurrentPage('records')}
+                >
+                  <span className="page-link-icon" style={{ position: 'relative' }}>
+                    <IconListDetails size={18} />
+                    {overdueCount + staleCount + reminderDueCount > 0 ? (
+                      <span className="nav-signal-dot" />
+                    ) : null}
+                  </span>
+                  <span>
+                    <strong>Records</strong>
+                    <small>Browse saved work</small>
+                  </span>
+                  {overdueCount + staleCount + reminderDueCount > 0 && !isSidebarCollapsed ? (
+                    <Badge size="xs" variant="filled" color="red" radius="xl" className="page-link-shortcut">
+                      {overdueCount + staleCount + reminderDueCount}
+                    </Badge>
+                  ) : (
+                    <span className="page-link-shortcut">3</span>
+                  )}
+                </button>
+              </Tooltip>
 
-              <button
-                type="button"
-                className={`page-link ${currentPage === 'board' ? 'active' : ''}`}
-                onClick={() => setCurrentPage('board')}
-              >
-                <span className="page-link-icon">
-                  <IconLayoutKanban size={18} />
-                </span>
-                <span>
-                  <strong>Board</strong>
-                  <small>Kanban by status</small>
-                </span>
-                <span className="page-link-shortcut">4</span>
-              </button>
+              <Tooltip label="Board — Kanban by status" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'board' ? 'active' : ''}`}
+                  onClick={() => setCurrentPage('board')}
+                >
+                  <span className="page-link-icon">
+                    <IconLayoutKanban size={18} />
+                  </span>
+                  <span>
+                    <strong>Board</strong>
+                    <small>Kanban by status</small>
+                  </span>
+                  <span className="page-link-shortcut">4</span>
+                </button>
+              </Tooltip>
 
-              <button
-                type="button"
-                className={`page-link ${currentPage === 'insights' ? 'active' : ''}`}
-                onClick={() => setCurrentPage('insights')}
-              >
-                <span className="page-link-icon">
-                  <IconChartBar size={18} />
-                </span>
-                <span>
-                  <strong>Insights</strong>
-                  <small>Charts and trends</small>
-                </span>
-                <span className="page-link-shortcut">5</span>
-              </button>
+              <Tooltip label="Insights — Charts and trends" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'insights' ? 'active' : ''}`}
+                  onClick={() => setCurrentPage('insights')}
+                >
+                  <span className="page-link-icon">
+                    <IconChartBar size={18} />
+                  </span>
+                  <span>
+                    <strong>Insights</strong>
+                    <small>Charts and trends</small>
+                  </span>
+                  <span className="page-link-shortcut">5</span>
+                </button>
+              </Tooltip>
 
-              <button
-                type="button"
-                className={`page-link ${currentPage === 'weekly' ? 'active' : ''}`}
-                onClick={() => setCurrentPage('weekly')}
-              >
-                <span className="page-link-icon">
-                  <IconClipboardText size={18} />
-                </span>
-                <span>
-                  <strong>Weekly</strong>
-                  <small>Email-ready report</small>
-                </span>
-                <span className="page-link-shortcut">6</span>
-              </button>
+              <Tooltip label="Weekly — Email-ready report" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'weekly' ? 'active' : ''}`}
+                  onClick={() => setCurrentPage('weekly')}
+                >
+                  <span className="page-link-icon">
+                    <IconClipboardText size={18} />
+                  </span>
+                  <span>
+                    <strong>Weekly</strong>
+                    <small>Email-ready report</small>
+                  </span>
+                  <span className="page-link-shortcut">6</span>
+                </button>
+              </Tooltip>
 
-              <button
-                type="button"
-                className={`page-link ${currentPage === 'admin' ? 'active' : ''}`}
-                onClick={() => setCurrentPage('admin')}
-              >
-                <span className="page-link-icon">
-                  <IconFolders size={18} />
-                </span>
-                <span>
-                  <strong>Admin</strong>
-                  <small>Manage tracker settings</small>
-                </span>
-                <span className="page-link-shortcut">7</span>
-              </button>
+              <Tooltip label="Admin — Manage tracker settings" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'admin' ? 'active' : ''}`}
+                  onClick={() => setCurrentPage('admin')}
+                >
+                  <span className="page-link-icon">
+                    <IconFolders size={18} />
+                  </span>
+                  <span>
+                    <strong>Admin</strong>
+                    <small>Manage tracker settings</small>
+                  </span>
+                  <span className="page-link-shortcut">7</span>
+                </button>
+              </Tooltip>
             </div>
 
             {!isSidebarCollapsed ? (
@@ -4373,20 +4512,32 @@ function App() {
             <div className="sidebar-spacer" />
 
             {isSidebarCollapsed ? (
-              <Button
-                variant="default"
-                className="theme-toggle-button"
-                onClick={() =>
-                  setColorScheme(activeColorScheme === 'dark' ? 'light' : 'dark')
-                }
-                aria-label={
-                  activeColorScheme === 'dark'
-                    ? 'Switch to light theme'
-                    : 'Switch to dark theme'
-                }
-              >
-                {activeColorScheme === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
-              </Button>
+              <>
+                <Tooltip label="Keyboard shortcuts (?)" position="right">
+                  <Button
+                    variant="default"
+                    className="theme-toggle-button"
+                    onClick={() => setIsShortcutsModalOpen(true)}
+                    aria-label="Show keyboard shortcuts"
+                  >
+                    <IconHelp size={18} />
+                  </Button>
+                </Tooltip>
+                <Button
+                  variant="default"
+                  className="theme-toggle-button"
+                  onClick={() =>
+                    setColorScheme(activeColorScheme === 'dark' ? 'light' : 'dark')
+                  }
+                  aria-label={
+                    activeColorScheme === 'dark'
+                      ? 'Switch to light theme'
+                      : 'Switch to dark theme'
+                  }
+                >
+                  {activeColorScheme === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
+                </Button>
+              </>
             ) : (
               <Card radius="xl" padding="lg" className="surface-card theme-switcher-card">
                 <Stack gap="sm">
@@ -4941,6 +5092,11 @@ function App() {
                   </Group>
                 </div>
 
+                <div className="form-section-label">
+                  <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="form-section-eyebrow">Identification</Text>
+                  <Divider />
+                </div>
+
                 <div className="grid-2">
                   <TextInput
                     label="Title"
@@ -4960,6 +5116,11 @@ function App() {
                     searchable
                     {...form.getInputProps('owner')}
                   />
+                </div>
+
+                <div className="form-section-label">
+                  <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="form-section-eyebrow">Classification</Text>
+                  <Divider />
                 </div>
 
                 <div className="grid-2">
@@ -4987,6 +5148,21 @@ function App() {
                   />
                 </div>
 
+                <MultiSelect
+                  label="Category"
+                  placeholder="Choose one or more categories"
+                  data={bootstrapData.categories}
+                  searchable
+                  hidePickedOptions
+                  required
+                  {...form.getInputProps('categories')}
+                />
+
+                <div className="form-section-label">
+                  <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="form-section-eyebrow">Schedule</Text>
+                  <Divider />
+                </div>
+
                 <div className="grid-2">
                   <DateInput
                     label="Start date"
@@ -5007,6 +5183,11 @@ function App() {
                   />
                 </div>
 
+                <div className="form-section-label">
+                  <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="form-section-eyebrow">Description</Text>
+                  <Divider />
+                </div>
+
                 <Textarea
                   label="Description"
                   placeholder="Describe the activity, expected outcome, and any cross-team notes"
@@ -5015,6 +5196,11 @@ function App() {
                   required
                   {...form.getInputProps('description')}
                 />
+
+                <div className="form-section-label">
+                  <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="form-section-eyebrow">Scoring</Text>
+                  <Divider />
+                </div>
 
                 <div className="grid-3">
                   <Select
@@ -5042,6 +5228,11 @@ function App() {
                   />
                 </div>
 
+                <div className="form-section-label">
+                  <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="form-section-eyebrow">Tracking</Text>
+                  <Divider />
+                </div>
+
                 <div className="grid-2">
                   <Select
                     label="Status"
@@ -5059,16 +5250,6 @@ function App() {
                     {...form.getInputProps('reminderCadence')}
                   />
                 </div>
-
-                <MultiSelect
-                  label="Category"
-                  placeholder="Choose one or more categories"
-                  data={bootstrapData.categories}
-                  searchable
-                  hidePickedOptions
-                  required
-                  {...form.getInputProps('categories')}
-                />
 
                 {selectedCategoryImpactFactor !== null ? (
                   <div className="category-impact-panel">
@@ -5098,6 +5279,11 @@ function App() {
                     </div>
                   </div>
                 ) : null}
+
+                <div className="form-section-label">
+                  <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="form-section-eyebrow">Attachments</Text>
+                  <Divider />
+                </div>
 
                 <div>
                   <InputLabel required mb={8}>
@@ -6144,26 +6330,23 @@ function App() {
                   >
                     <Stack gap="md">
                       <Group justify="space-between" align="center">
-                        <div>
+                        <Group gap="xs" align="center">
                           <Text fw={700}>{column.status}</Text>
-                          <Text size="sm" c="dimmed">
-                            {column.records.length} item
-                            {column.records.length === 1 ? '' : 's'}
-                          </Text>
-                        </div>
-                        <Badge
-                          variant="light"
-                          color={activityStatusColor(column.status)}
-                          radius="xl"
-                        >
-                          {column.status}
-                        </Badge>
+                          <Badge
+                            variant="filled"
+                            color={activityStatusColor(column.status)}
+                            radius="xl"
+                            size="sm"
+                          >
+                            {column.records.length}
+                          </Badge>
+                        </Group>
                       </Group>
 
                       {column.records.length === 0 ? (
                         <div className="board-empty">
                           <Text size="sm" c="dimmed">
-                            No records in this column.
+                            Drop cards here to move them to {column.status}.
                           </Text>
                         </div>
                       ) : (
@@ -6172,7 +6355,7 @@ function App() {
                             <button
                               type="button"
                               key={record.id}
-                              className="board-card"
+                              className={`board-card board-card-priority-${record.priority.toLowerCase()}`}
                               draggable
                               onDragStart={() => setDraggingRecordId(record.id)}
                               onDragEnd={() => setDraggingRecordId(null)}
@@ -6185,19 +6368,12 @@ function App() {
                                 <Text className="record-row-key">
                                   {formatRecordKey(record.id)}
                                 </Text>
-                                <Badge variant="light" color="blue" radius="xl">
-                                  {record.priority}
-                                </Badge>
+                                <Text size="xs" c="dimmed">{record.priority}</Text>
                               </div>
-                              <Text fw={700}>{record.title}</Text>
-                              <Text size="sm" c="dimmed">
-                                {record.owner}
+                              <Text fw={700} size="sm">{record.title}</Text>
+                              <Text size="xs" c="dimmed">
+                                {record.owner}{record.projects.length > 0 ? ` · ${record.projects.slice(0, 1).join(', ')}` : ''}
                               </Text>
-                              <div className="board-card-meta">
-                                <span>{record.projects.slice(0, 2).join(', ')}</span>
-                                <span>{record.comments.length} comments</span>
-                                <span>{record.reminderCadence} reminder</span>
-                              </div>
                               <div className="board-card-badges">
                                 {signalBadges(
                                   record,
@@ -6207,6 +6383,7 @@ function App() {
                                     variant="light"
                                     color={badge.color}
                                     radius="xl"
+                                    size="xs"
                                     key={`${record.id}-${badge.label}`}
                                   >
                                     {badge.label}
@@ -6251,81 +6428,106 @@ function App() {
                 </Group>
               </div>
 
-              <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
-                <InsightMetricCard
-                  label="Filtered records"
-                  value={String(filteredInsightRecords.length)}
-                  caption="All charts below are based on this record set."
-                />
-                <InsightMetricCard
-                  label="Average duration"
-                  value={`${formatMetricNumber(insightAverageDuration)} days`}
-                  caption="Average activity span across the filtered selection."
-                />
-                <InsightMetricCard
-                  label={`${featuredPriorityLabel} priority share`}
-                  value={`${formatMetricNumber(insightHighPriorityShare)}%`}
-                  caption={`How much of the current slice is marked ${featuredPriorityLabel.toLowerCase()} priority.`}
-                />
-                <InsightMetricCard
-                  label="Avg attachments"
-                  value={formatMetricNumber(insightAverageAttachments)}
-                  caption="Average number of embedded files per activity."
-                />
-              </SimpleGrid>
+              {isRefreshingRecords ? (
+                <>
+                  <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                    {[0, 1, 2, 3].map((i) => (
+                      <Card key={i} radius="xl" padding="lg" className="surface-card">
+                        <Skeleton height={12} width="60%" mb={12} radius="sm" />
+                        <Skeleton height={28} width="40%" mb={8} radius="sm" />
+                        <Skeleton height={10} radius="sm" />
+                      </Card>
+                    ))}
+                  </SimpleGrid>
+                  <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="md">
+                    {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+                      <Card key={i} radius="xl" padding="lg" className="surface-card">
+                        <Skeleton height={14} width="50%" mb={6} radius="sm" />
+                        <Skeleton height={10} width="70%" mb={16} radius="sm" />
+                        <Skeleton height={140} radius="sm" />
+                      </Card>
+                    ))}
+                  </SimpleGrid>
+                </>
+              ) : (
+                <>
+                  <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                    <InsightMetricCard
+                      label="Filtered records"
+                      value={String(filteredInsightRecords.length)}
+                      caption="All charts below are based on this record set."
+                    />
+                    <InsightMetricCard
+                      label="Average duration"
+                      value={`${formatMetricNumber(insightAverageDuration)} days`}
+                      caption="Average activity span across the filtered selection."
+                    />
+                    <InsightMetricCard
+                      label={`${featuredPriorityLabel} priority share`}
+                      value={`${formatMetricNumber(insightHighPriorityShare)}%`}
+                      caption={`How much of the current slice is marked ${featuredPriorityLabel.toLowerCase()} priority.`}
+                    />
+                    <InsightMetricCard
+                      label="Avg attachments"
+                      value={formatMetricNumber(insightAverageAttachments)}
+                      caption="Average number of embedded files per activity."
+                    />
+                  </SimpleGrid>
 
-              <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="md">
-                <TimelinePlot
-                  title="Submission cadence"
-                  subtitle="How many activities were submitted each month"
-                  data={insightTimeline}
-                />
-                <TimelinePlot
-                  title="Average open activities"
-                  subtitle="Activities whose active date range overlaps each month"
-                  data={insightOpenActivitiesByMonth}
-                />
-                <TimelinePlot
-                  title="Weighted open activities"
-                  subtitle="Open activity load multiplied by Admin activity-type factors"
-                  data={insightWeightedOpenActivitiesByMonth}
-                />
-                <HeatmapPlot
-                  title="Effort vs impact"
-                  subtitle="Where the current workload sits in the effort-impact matrix"
-                  cells={insightHeatmap}
-                  efforts={bootstrapData.efforts}
-                  impacts={bootstrapData.impacts}
-                  valueMode={heatmapValueMode}
-                  onValueModeChange={setHeatmapValueMode}
-                />
-                <RankedPlot
-                  title="Top owners"
-                  subtitle="Who appears most often in the filtered record set"
-                  data={insightOwnerBuckets}
-                />
-                <RankedPlot
-                  title="Department coverage"
-                  subtitle="How often departments are involved across saved work"
-                  data={insightDepartmentBuckets}
-                />
-                <RankedPlot
-                  title="Project coverage"
-                  subtitle="Projects receiving the most tracked activity"
-                  data={insightProjectBuckets}
-                />
-                <RankedPlot
-                  title="Average duration by owner"
-                  subtitle="Which owners tend to have longer-running activities"
-                  data={insightDurationByOwner}
-                />
-              </SimpleGrid>
+                  <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="md">
+                    <TimelinePlot
+                      title="Submission cadence"
+                      subtitle="How many activities were submitted each month"
+                      data={insightTimeline}
+                    />
+                    <TimelinePlot
+                      title="Average open activities"
+                      subtitle="Activities whose active date range overlaps each month"
+                      data={insightOpenActivitiesByMonth}
+                    />
+                    <TimelinePlot
+                      title="Weighted open activities"
+                      subtitle="Open activity load multiplied by Admin activity-type factors"
+                      data={insightWeightedOpenActivitiesByMonth}
+                    />
+                    <HeatmapPlot
+                      title="Effort vs impact"
+                      subtitle="Where the current workload sits in the effort-impact matrix"
+                      cells={insightHeatmap}
+                      efforts={bootstrapData.efforts}
+                      impacts={bootstrapData.impacts}
+                      valueMode={heatmapValueMode}
+                      onValueModeChange={setHeatmapValueMode}
+                    />
+                    <RankedPlot
+                      title="Top owners"
+                      subtitle="Who appears most often in the filtered record set"
+                      data={insightOwnerBuckets}
+                    />
+                    <RankedPlot
+                      title="Department coverage"
+                      subtitle="How often departments are involved across saved work"
+                      data={insightDepartmentBuckets}
+                    />
+                    <RankedPlot
+                      title="Project coverage"
+                      subtitle="Projects receiving the most tracked activity"
+                      data={insightProjectBuckets}
+                    />
+                    <RankedPlot
+                      title="Average duration by owner"
+                      subtitle="Which owners tend to have longer-running activities"
+                      data={insightDurationByOwner}
+                    />
+                  </SimpleGrid>
 
-              <RankedPlot
-                title="Category coverage"
-                subtitle="Categories most represented in the current filtered slice"
-                data={insightCategoryBuckets}
-              />
+                  <RankedPlot
+                    title="Category coverage"
+                    subtitle="Categories most represented in the current filtered slice"
+                    data={insightCategoryBuckets}
+                  />
+                </>
+              )}
             </Stack>
           ) : currentPage === 'weekly' ? (
             <Stack gap="lg">
