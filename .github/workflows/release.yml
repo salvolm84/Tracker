@@ -43,6 +43,10 @@ jobs:
       - name: Build native bundle
         run: npm run tauri -- build --bundles ${{ matrix.bundles }}
 
+      - name: Sign macOS app (ad-hoc)
+        if: matrix.name == 'macos'
+        run: codesign --force --deep --sign - src-tauri/target/release/bundle/macos/Tracker.app
+
       - name: Prepare release artifacts
         shell: bash
         run: |
@@ -84,8 +88,12 @@ jobs:
 
           Installers are built by GitHub Actions on native macOS and Windows runners.
 
-          macOS: download the DMG or app bundle artifact.
-          Windows: download the MSI or EXE installer artifact.
+          **macOS:** download the zip, extract it, and open Tracker.app.
+          The app is ad-hoc signed but not notarized. On first launch macOS may warn
+          that the developer cannot be verified — right-click the app and choose Open
+          to bypass this once.
+
+          **Windows:** download the MSI or EXE installer.
           NOTES
 
       - name: Publish release
