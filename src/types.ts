@@ -155,6 +155,8 @@ export interface DatabaseBackup {
 export interface DatabaseDocument {
   settings: TrackerSettings
   records: ActivityRecord[]
+  debugRecords?: DebugRecord[]
+  debugSettings?: DebugSettings
 }
 
 export interface AppendCommentPayload {

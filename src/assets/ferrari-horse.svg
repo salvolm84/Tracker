@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 120" fill="none">
+  <!-- Shield background -->
+  <path d="M50 4 L96 20 L96 72 Q96 100 50 116 Q4 100 4 72 L4 20 Z" fill="#FFD700" stroke="#C8960C" stroke-width="2"/>
+  <!-- Prancing horse silhouette -->
+  <path d="
+    M52 26
+    C52 26 48 24 45 26 C42 28 42 32 44 34
+    C44 34 40 33 38 35 C36 37 37 40 39 41
+    C39 41 35 40 33 43 C31 46 34 50 37 50
+    C37 50 34 52 34 56 C34 60 38 62 41 61
+    L41 70 C41 74 43 78 46 80 L46 90
+    C46 92 48 94 50 94 C52 94 54 92 54 90
+    L54 82 L58 82 L58 90
+    C58 92 60 94 62 94 C64 94 66 92 66 90
+    L66 78 C68 76 70 72 70 68 L70 60
+    C72 59 74 56 73 53 C72 50 69 49 67 50
+    C68 47 67 44 65 43 C63 42 61 43 60 45
+    C60 45 60 40 57 38 C55 36 52 37 52 37
+    L52 26 Z
+    M45 34 C44 36 45 38 47 38 C49 38 50 36 50 34
+    M62 38 C60 36 58 35 57 37
+    M38 50 C39 52 41 52 42 51
+    M67 50 C66 52 64 52 63 51
+  " fill="#1a1a1a" stroke="#1a1a1a" stroke-width="0.5" stroke-linejoin="round"/>
+  <!-- Tail -->
+  <path d="M44 26 C40 20 36 16 38 10 C40 6 46 8 48 12 C50 16 50 22 52 26" fill="#1a1a1a" stroke="#1a1a1a" stroke-width="0.5"/>
+  <!-- Mane detail -->
+  <path d="M50 26 C53 22 56 18 54 13 C52 8 46 9 47 14 C48 18 50 22 52 26" fill="#1a1a1a" stroke="#1a1a1a" stroke-width="0.5"/>
+</svg>

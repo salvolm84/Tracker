@@ -130,12 +130,12 @@ import type {
   StatsFilters,
   TrackerSettings,
 } from './types'
+import ferrariLogo from './assets/ferrari-logo-cropped.png'
 import './App.css'
 
 dayjs.extend(isoWeek)
 
-const TRACKER_NAME = 'Tracker'
-const TRACKER_SHORT_NAME = 'TRK'
+const TRACKER_NAME = 'Electronics Application Engineering'
 const ADMIN_PASSWORD = 'strasburgo'
 const DEMERIT_OPTIONS = ['DEM100', 'DEM40', 'DEM20FS', 'DEM20', 'DEM10FS', 'DEM10', 'DEM1', 'NA']
 
@@ -723,6 +723,8 @@ function settingsFromBootstrap(bootstrap: BootstrapPayload): TrackerSettings {
 function buildDatabaseDocument(
   settings: TrackerSettings,
   records: ActivityRecord[],
+  debugRecords?: DebugRecord[],
+  debugSettings?: DebugSettings,
 ): DatabaseDocument {
   return {
     settings: {
@@ -741,6 +743,8 @@ function buildDatabaseDocument(
       reminderCadences: settings.reminderCadences.map((entry) => ({ ...entry })),
     },
     records,
+    debugRecords,
+    debugSettings,
   }
 }
 
@@ -1096,132 +1100,7 @@ function RankingCard({
   )
 }
 
-function InsightMetricCard({
-  label,
-  value,
-  caption,
-}: {
-  label: string
-  value: string
-  caption: string
-}) {
-  return (
-    <Card radius="xl" padding="lg" className="surface-card">
-      <Text className="metric-label">{label}</Text>
-      <Text className="insight-value">{value}</Text>
-      <Text size="sm" c="dimmed" mt={8}>
-        {caption}
-      </Text>
-    </Card>
-  )
-}
 
-function TimelinePlot({
-  title,
-  subtitle,
-  data,
-}: {
-  title: string
-  subtitle: string
-  data: InsightBucket[]
-}) {
-  const maxValue = data.reduce((current, item) => Math.max(current, item.value), 0)
-
-  return (
-    <Card radius="xl" padding="lg" className="surface-card">
-      <Stack gap="md">
-        <div>
-          <Text fw={700}>{title}</Text>
-          <Text size="sm" c="dimmed">
-            {subtitle}
-          </Text>
-        </div>
-
-        {data.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            No records match the current filters.
-          </Text>
-        ) : (
-          <div className="timeline-chart">
-            {data.map((item) => (
-              <div className="timeline-bar-group" key={item.label}>
-                <Text size="xs" c="dimmed" fw={700}>
-                  {item.value}
-                </Text>
-                <div
-                  className="timeline-bar"
-                  style={{
-                    height: `${Math.max(16, (item.value / Math.max(maxValue, 1)) * 180)}px`,
-                  }}
-                />
-                <Text size="xs" c="dimmed" className="timeline-label">
-                  {item.label}
-                </Text>
-              </div>
-            ))}
-          </div>
-        )}
-      </Stack>
-    </Card>
-  )
-}
-
-function RankedPlot({
-  title,
-  subtitle,
-  data,
-}: {
-  title: string
-  subtitle: string
-  data: InsightBucket[]
-}) {
-  const maxValue = data.reduce((current, item) => Math.max(current, item.value), 0)
-
-  return (
-    <Card radius="xl" padding="lg" className="surface-card">
-      <Stack gap="md">
-        <div>
-          <Text fw={700}>{title}</Text>
-          <Text size="sm" c="dimmed">
-            {subtitle}
-          </Text>
-        </div>
-
-        {data.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            No records match the current filters.
-          </Text>
-        ) : (
-          <div className="bar-plot-list">
-            {data.map((item) => (
-              <div className="bar-plot-row" key={item.label}>
-                <div className="bar-plot-head">
-                  <Text fw={600}>{item.label}</Text>
-                  <Text size="sm" c="dimmed">
-                    {item.value}
-                  </Text>
-                </div>
-                <div className="bar-plot-track">
-                  <div
-                    className="bar-plot-fill"
-                    style={{
-                      width: `${(item.value / Math.max(maxValue, 1)) * 100}%`,
-                    }}
-                  />
-                </div>
-                {item.note ? (
-                  <Text size="xs" c="dimmed">
-                    {item.note}
-                  </Text>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </Stack>
-    </Card>
-  )
-}
 
 function heatmapCellTone(
   effort: string,
@@ -1926,7 +1805,16 @@ function App() {
   const [isLoadingDebugRecords, setIsLoadingDebugRecords] = useState(false)
   const [isSavingDebug, setIsSavingDebug] = useState(false)
   const [isDeletingDebugId, setIsDeletingDebugId] = useState<string | null>(null)
-  const [debugSearchTerm, setDebugSearchTerm] = useState('')
+  const [isDebugFiltersCollapsed, setIsDebugFiltersCollapsed] = useState(true)
+  const [debugFilters, setDebugFilters] = useState({
+    searchTerm: '',
+    projects: [] as string[],
+    departments: [] as string[],
+    categories: [] as string[],
+    suppliers: [] as string[],
+    occurrencePhases: [] as string[],
+    outcomes: [] as string[],
+  })
   const [debugPreviewAttachmentKey, setDebugPreviewAttachmentKey] = useState<string | null>(null)
   const [debugPreviewAttachmentDataByKey, setDebugPreviewAttachmentDataByKey] =
     useState<Record<string, AttachmentData>>({})
@@ -2361,6 +2249,37 @@ function App() {
     matchesSharedFilters(record, sharedFilters),
   )
   boardRecordsRef.current = filteredRecords
+
+  const uniqueDebugSuppliers = [...new Set(debugRecords.map((r) => r.supplier).filter(Boolean))].sort()
+  const uniqueDebugOccurrencePhases = [...new Set(debugRecords.map((r) => r.occurrencePhase).filter(Boolean))].sort()
+  const hasActiveDebugFilters =
+    debugFilters.searchTerm.trim().length > 0 ||
+    debugFilters.projects.length > 0 ||
+    debugFilters.departments.length > 0 ||
+    debugFilters.categories.length > 0 ||
+    debugFilters.suppliers.length > 0 ||
+    debugFilters.occurrencePhases.length > 0 ||
+    debugFilters.outcomes.length > 0
+  const filteredDebugRecords = debugRecords.filter((r) => {
+    const q = debugFilters.searchTerm.trim().toLowerCase()
+    const searchMatch =
+      !q ||
+      r.supplier.toLowerCase().includes(q) ||
+      r.component.toLowerCase().includes(q) ||
+      r.description.toLowerCase().includes(q) ||
+      r.projects.some((p) => p.toLowerCase().includes(q)) ||
+      r.departments.some((d) => d.toLowerCase().includes(q)) ||
+      r.category.some((c) => c.toLowerCase().includes(q))
+    return (
+      searchMatch &&
+      (debugFilters.projects.length === 0 || r.projects.some((p) => debugFilters.projects.includes(p))) &&
+      (debugFilters.departments.length === 0 || r.departments.some((d) => debugFilters.departments.includes(d))) &&
+      (debugFilters.categories.length === 0 || r.category.some((c) => debugFilters.categories.includes(c))) &&
+      (debugFilters.suppliers.length === 0 || debugFilters.suppliers.includes(r.supplier)) &&
+      (debugFilters.occurrencePhases.length === 0 || debugFilters.occurrencePhases.includes(r.occurrencePhase ?? '')) &&
+      (debugFilters.outcomes.length === 0 || (r.outcome ?? []).some((o) => debugFilters.outcomes.includes(o)))
+    )
+  })
   const recordsListDisplay = [
     ...filteredRecords.filter((r) => pinnedRecordIds.has(r.id)),
     ...filteredRecords.filter((r) => !pinnedRecordIds.has(r.id)),
@@ -2518,20 +2437,12 @@ function App() {
           (sum, record) => sum + durationDays(record),
           0,
         ) / filteredInsightRecords.length
-  const insightAttachmentCount = filteredInsightRecords.reduce(
-    (sum, record) => sum + record.attachments.length,
-    0,
-  )
   const insightHighPriorityShare =
     filteredInsightRecords.length === 0
       ? 0
       : (filteredInsightRecords.filter((record) => record.priority === featuredPriorityLabel).length /
           filteredInsightRecords.length) *
         100
-  const insightAverageAttachments =
-    filteredInsightRecords.length === 0
-      ? 0
-      : insightAttachmentCount / filteredInsightRecords.length
   const insightDurationByOwner = buildAverageDurationBuckets(
     filteredInsightRecords,
     6,
@@ -4114,14 +4025,14 @@ function App() {
   }
 
   function handleExportJson() {
-    const document = buildDatabaseDocument(trackerSettings, records)
+    const document = buildDatabaseDocument(trackerSettings, records, debugRecords, debugSettings)
 
     downloadTextFile(
       `tracker-export-${dayjs().format('YYYY-MM-DD-HHmm')}.json`,
       JSON.stringify(document, null, 2),
       'application/json',
     )
-    setImportExportMessage('Exported the current database and admin settings as JSON.')
+    setImportExportMessage(`Exported the current database as JSON (${records.length} activity records, ${debugRecords.length} debug entries).`)
   }
 
   function handleExportCsv() {
@@ -4180,7 +4091,7 @@ function App() {
       const content = await file.text()
       const parsed = JSON.parse(content)
       const importDocument = Array.isArray(parsed)
-        ? { records: parsed as ActivityRecord[], settings: undefined }
+        ? { records: parsed as ActivityRecord[], settings: undefined, debugRecords: undefined, debugSettings: undefined }
         : typeof parsed === 'object' &&
             parsed !== null &&
             Array.isArray((parsed as DatabaseDocument).records) &&
@@ -4189,6 +4100,8 @@ function App() {
           ? {
               records: (parsed as DatabaseDocument).records,
               settings: (parsed as DatabaseDocument).settings,
+              debugRecords: (parsed as DatabaseDocument).debugRecords,
+              debugSettings: (parsed as DatabaseDocument).debugSettings,
             }
           : null
 
@@ -4199,7 +4112,10 @@ function App() {
       const result = await replaceDatabaseRecords(
         importDocument.records,
         importDocument.settings,
+        importDocument.debugRecords,
+        importDocument.debugSettings,
       )
+      const debugCount = importDocument.debugRecords?.length ?? 0
       startTransition(() => {
         setBootstrapData((current) => ({
           ...current,
@@ -4210,8 +4126,8 @@ function App() {
         }))
         setImportExportMessage(
           result.backupPath
-            ? `Imported ${importDocument.records.length} records from JSON. Backup saved to ${result.backupPath}.`
-            : `Imported ${importDocument.records.length} records from JSON.`,
+            ? `Imported ${importDocument.records.length} activity records and ${debugCount} debug entries from JSON. Backup saved to ${result.backupPath}.`
+            : `Imported ${importDocument.records.length} activity records and ${debugCount} debug entries from JSON.`,
         )
         setStatusTone('success')
         setStatusMessage(
@@ -4668,18 +4584,18 @@ function App() {
             <div className="sidebar-topbar">
               {!isSidebarCollapsed ? (
                 <div className="sidebar-brand">
-                  <div className="brand-copy">
-                    <Text className="eyebrow">{activeModule === 'activity' ? TRACKER_NAME : 'Key Debug'}</Text>
-                    {activeModule === 'debug' ? (
-                      <Title order={1} className="hero-title">
-                        Significant debug result repository.
-                      </Title>
-                    ) : null}
-                  </div>
+                  <Group gap="xs" wrap="nowrap" align="center">
+                    <img src={ferrariLogo} alt="Ferrari" className="brand-logo" />
+                    <div className="brand-copy">
+                      <Text className="eyebrow" style={{ fontSize: '0.62rem' }}>
+                        {activeModule === 'activity' ? TRACKER_NAME : 'Key Debug'}
+                      </Text>
+                    </div>
+                  </Group>
                 </div>
               ) : (
                 <div className="sidebar-brand compact">
-                  <Text className="eyebrow">{activeModule === 'activity' ? TRACKER_SHORT_NAME : 'DBG'}</Text>
+                  <img src={ferrariLogo} alt="Ferrari" className="brand-logo-compact" />
                 </div>
               )}
 
@@ -5419,6 +5335,117 @@ function App() {
                         onChange={(impacts) =>
                           setSharedFilters((current) => ({ ...current, impacts }))
                         }
+                      />
+                    </div>
+                  </Stack>
+                ) : null}
+              </Stack>
+            </Card>
+          ) : null}
+
+          {(currentPage === 'debug-list' || currentPage === 'debug-insights') ? (
+            <Card radius="xl" padding="lg" className="surface-card common-filter-card">
+              <Stack gap="md">
+                <Group justify="space-between" align="flex-start">
+                  <div>
+                    <Text fw={700}>Debug filters</Text>
+                    <Text size="sm" c="dimmed">
+                      Shared across entries list and insights.
+                    </Text>
+                  </div>
+                  <Group gap="sm">
+                    <Badge variant="light" color={hasActiveDebugFilters ? 'blue' : 'gray'}>
+                      {filteredDebugRecords.length} match{filteredDebugRecords.length === 1 ? '' : 'es'}
+                    </Badge>
+                    {hasActiveDebugFilters ? (
+                      <Button
+                        variant="subtle"
+                        color="gray"
+                        radius="xl"
+                        onClick={() => setDebugFilters({ searchTerm: '', projects: [], departments: [], categories: [], suppliers: [], occurrencePhases: [], outcomes: [] })}
+                      >
+                        Clear filters
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="default"
+                      color="gray"
+                      radius="xl"
+                      leftSection={isDebugFiltersCollapsed ? <IconChevronDown size={16} /> : <IconChevronUp size={16} />}
+                      onClick={() => setIsDebugFiltersCollapsed((v) => !v)}
+                    >
+                      {isDebugFiltersCollapsed ? 'Show filters' : 'Hide filters'}
+                    </Button>
+                  </Group>
+                </Group>
+
+                {!isDebugFiltersCollapsed ? (
+                  <Stack gap="md">
+                    <TextInput
+                      label="Search"
+                      placeholder="Search supplier, component, description, project…"
+                      value={debugFilters.searchTerm}
+                      onChange={(e) => setDebugFilters((f) => ({ ...f, searchTerm: e.currentTarget.value }))}
+                      rightSection={debugFilters.searchTerm ? (
+                        <ActionIcon size="sm" variant="subtle" onClick={() => setDebugFilters((f) => ({ ...f, searchTerm: '' }))}>
+                          <IconX size={14} />
+                        </ActionIcon>
+                      ) : null}
+                    />
+                    <div className="filter-grid-wide">
+                      <MultiSelect
+                        label="Project"
+                        placeholder="Any project"
+                        data={bootstrapData.projects}
+                        searchable
+                        hidePickedOptions
+                        value={debugFilters.projects}
+                        onChange={(projects) => setDebugFilters((f) => ({ ...f, projects }))}
+                      />
+                      <MultiSelect
+                        label="Department"
+                        placeholder="Any department"
+                        data={bootstrapData.departments}
+                        searchable
+                        hidePickedOptions
+                        value={debugFilters.departments}
+                        onChange={(departments) => setDebugFilters((f) => ({ ...f, departments }))}
+                      />
+                      <MultiSelect
+                        label="Category"
+                        placeholder="Any category"
+                        data={debugSettings.categories}
+                        searchable
+                        hidePickedOptions
+                        value={debugFilters.categories}
+                        onChange={(categories) => setDebugFilters((f) => ({ ...f, categories }))}
+                      />
+                      <MultiSelect
+                        label="Supplier"
+                        placeholder="Any supplier"
+                        data={uniqueDebugSuppliers}
+                        searchable
+                        hidePickedOptions
+                        value={debugFilters.suppliers}
+                        onChange={(suppliers) => setDebugFilters((f) => ({ ...f, suppliers }))}
+                      />
+                      <MultiSelect
+                        label="Occurrence phase"
+                        placeholder="Any phase"
+                        data={uniqueDebugOccurrencePhases.length > 0 ? uniqueDebugOccurrencePhases : ['Development', 'Qualification', 'Post-SOP']}
+                        searchable
+                        hidePickedOptions
+                        value={debugFilters.occurrencePhases}
+                        onChange={(occurrencePhases) => setDebugFilters((f) => ({ ...f, occurrencePhases }))}
+                      />
+                      <MultiSelect
+                        label="Outcome"
+                        placeholder="Any outcome"
+                        data={debugSettings.outcomeOptions}
+                        searchable
+                        hidePickedOptions
+                        value={debugFilters.outcomes}
+                        onChange={(outcomes) => setDebugFilters((f) => ({ ...f, outcomes }))}
                       />
                     </div>
                   </Stack>
@@ -7155,47 +7182,183 @@ function App() {
                     ))}
                   </SimpleGrid>
                 </>
-              ) : (
-                <>
-                  <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
-                    <InsightMetricCard
-                      label="Filtered records"
-                      value={String(filteredInsightRecords.length)}
-                      caption="All charts below are based on this record set."
-                    />
-                    <InsightMetricCard
-                      label="Average duration"
-                      value={`${formatMetricNumber(insightAverageDuration)} days`}
-                      caption="Average activity span across the filtered selection."
-                    />
-                    <InsightMetricCard
-                      label={`${featuredPriorityLabel} priority share`}
-                      value={`${formatMetricNumber(insightHighPriorityShare)}%`}
-                      caption={`How much of the current slice is marked ${featuredPriorityLabel.toLowerCase()} priority.`}
-                    />
-                    <InsightMetricCard
-                      label="Avg attachments"
-                      value={formatMetricNumber(insightAverageAttachments)}
-                      caption="Average number of embedded files per activity."
-                    />
-                  </SimpleGrid>
+              ) : (() => {
+                const rec = filteredInsightRecords
+                const completedCount = rec.filter((r) => r.status.toLowerCase() === 'completed').length
+                const openCount = rec.filter((r) => r.status.toLowerCase() === 'open').length
+                const labActiveCount = rec.filter((r) => r.labActivity && r.labActivity !== 'None').length
 
-                  <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="md">
-                    <TimelinePlot
-                      title="Submission cadence"
-                      subtitle="How many activities were submitted each month"
-                      data={insightTimeline}
-                    />
-                    <TimelinePlot
-                      title="Average open activities"
-                      subtitle="Activities whose active date range overlaps each month"
-                      data={insightOpenActivitiesByMonth}
-                    />
-                    <TimelinePlot
-                      title="Weighted open activities"
-                      subtitle="Open activity load multiplied by Admin activity-type factors"
-                      data={insightWeightedOpenActivitiesByMonth}
-                    />
+                // status distribution
+                const statusMap: Record<string, number> = {}
+                for (const r of rec) statusMap[r.status] = (statusMap[r.status] ?? 0) + 1
+                const statusEntries = Object.entries(statusMap).sort(([,a],[,b]) => b - a)
+
+                // priority distribution
+                const priorityMap: Record<string, number> = {}
+                for (const r of rec) priorityMap[r.priority] = (priorityMap[r.priority] ?? 0) + 1
+                const priorityEntries = Object.entries(priorityMap).sort(([,a],[,b]) => b - a)
+
+                const maxTimeline = Math.max(...insightTimeline.map((b) => b.value), 1)
+                const maxOpen = Math.max(...insightOpenActivitiesByMonth.map((b) => b.value), 1)
+                const maxWeighted = Math.max(...insightWeightedOpenActivitiesByMonth.map((b) => b.value), 1)
+
+                const barColor = (i: number) =>
+                  ['#3b82f6','#f59e0b','#10b981','#ef4444','#8b5cf6','#f97316','#06b6d4','#ec4899'][i % 8]
+
+                const statusColor = (s: string) => {
+                  switch (s.toLowerCase()) {
+                    case 'open': return '#3b82f6'
+                    case 'completed': return '#10b981'
+                    case 'scheduled': return '#8b5cf6'
+                    case 'on hold': return '#f59e0b'
+                    case 'halted': return '#ef4444'
+                    default: return '#6b7280'
+                  }
+                }
+                const priorityColor = (p: string) => {
+                  const last = bootstrapData.priorities[bootstrapData.priorities.length - 1]
+                  const first = bootstrapData.priorities[0]
+                  if (p === last) return '#ef4444'
+                  if (p === first) return '#10b981'
+                  return '#f59e0b'
+                }
+
+                const InlineBar = ({ entries, colorFn, max }: {
+                  entries: [string, number][]
+                  colorFn: (label: string, i: number) => string
+                  max?: number
+                }) => {
+                  const mx = max ?? Math.max(...entries.map(([,v]) => v), 1)
+                  return (
+                    <Stack gap={6}>
+                      {entries.slice(0, 8).map(([label, count], i) => (
+                        <div key={label}>
+                          <Group justify="space-between" mb={3}>
+                            <Text size="xs" truncate style={{ maxWidth: '65%' }}>{label}</Text>
+                            <Text size="xs" fw={700}>{count}</Text>
+                          </Group>
+                          <div style={{ height: 7, borderRadius: 4, background: 'var(--jira-bg-muted)', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${(count / mx) * 100}%`, background: colorFn(label, i), borderRadius: 4, transition: 'width 400ms ease' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </Stack>
+                  )
+                }
+
+                const ColChart = ({ data, maxVal, color = '#3b82f6' }: { data: { label: string; value: number }[]; maxVal: number; color?: string }) => (
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 80, overflowX: 'auto', paddingBottom: 4 }}>
+                    {data.map(({ label, value }) => (
+                      <div key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, flexShrink: 0, minWidth: 32 }}>
+                        <Text size="xs" fw={700} style={{ color }}>{value}</Text>
+                        <div style={{ width: 24, height: `${Math.max(5, (value / Math.max(maxVal, 1)) * 60)}px`, background: color, borderRadius: '3px 3px 0 0', transition: 'height 300ms ease' }} />
+                        <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap', transform: 'rotate(-35deg)', transformOrigin: 'top center', marginTop: 6 }}>{label}</Text>
+                      </div>
+                    ))}
+                  </div>
+                )
+
+                return (
+                  <Stack gap="md">
+                    {/* KPI strip */}
+                    <SimpleGrid cols={{ base: 2, sm: 3, md: 6 }} spacing="sm">
+                      {[
+                        { label: 'Total records', value: rec.length, color: 'blue' },
+                        { label: 'Open', value: openCount, color: 'blue' },
+                        { label: 'Completed', value: completedCount, color: 'teal' },
+                        { label: 'Avg duration', value: `${formatMetricNumber(insightAverageDuration)}d`, color: 'violet' },
+                        { label: `${featuredPriorityLabel} priority`, value: `${formatMetricNumber(insightHighPriorityShare)}%`, color: 'red' },
+                        { label: 'Lab activities', value: labActiveCount, color: 'yellow' },
+                      ].map(({ label, value, color }) => (
+                        <Card key={label} radius="xl" padding="sm" className="surface-card" style={{ borderTop: `3px solid var(--mantine-color-${color}-5)` }}>
+                          <Stack gap={2} align="center">
+                            <Text size="lg" fw={800}>{value}</Text>
+                            <Text size="xs" c="dimmed" ta="center">{label}</Text>
+                          </Stack>
+                        </Card>
+                      ))}
+                    </SimpleGrid>
+
+                    {/* Submission cadence column chart */}
+                    <Card radius="xl" padding="lg" className="surface-card">
+                      <Stack gap="sm">
+                        <Text fw={700}>Submission cadence</Text>
+                        <Text size="xs" c="dimmed">Number of activities submitted per month</Text>
+                        <ColChart data={insightTimeline} maxVal={maxTimeline} color="#3b82f6" />
+                      </Stack>
+                    </Card>
+
+                    {/* Open + weighted open timelines side by side */}
+                    <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Text fw={700}>Open activities per month</Text>
+                          <Text size="xs" c="dimmed">Activities whose date range overlaps each month</Text>
+                          <ColChart data={insightOpenActivitiesByMonth} maxVal={maxOpen} color="#10b981" />
+                        </Stack>
+                      </Card>
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Text fw={700}>Weighted open activities</Text>
+                          <Text size="xs" c="dimmed">Open load multiplied by category impact factors</Text>
+                          <ColChart data={insightWeightedOpenActivitiesByMonth} maxVal={maxWeighted} color="#8b5cf6" />
+                        </Stack>
+                      </Card>
+                    </SimpleGrid>
+
+                    {/* 3-col bar chart grid */}
+                    <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><IconUsersGroup size={15} /><Text fw={700}>Top owners</Text></Group>
+                          <InlineBar entries={insightOwnerBuckets.map((b) => [b.label, b.value] as [string, number])} colorFn={(_, i) => ['#3b82f6','#6366f1','#8b5cf6','#a855f7','#c026d3','#db2777'][i % 6]} />
+                        </Stack>
+                      </Card>
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><IconFolders size={15} /><Text fw={700}>Project coverage</Text></Group>
+                          <InlineBar entries={insightProjectBuckets.map((b) => [b.label, b.value] as [string, number])} colorFn={(_, i) => ['#f59e0b','#d97706','#b45309','#92400e','#78350f'][i % 5]} />
+                        </Stack>
+                      </Card>
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><Text fw={700}>Department coverage</Text></Group>
+                          <InlineBar entries={insightDepartmentBuckets.map((b) => [b.label, b.value] as [string, number])} colorFn={(_, i) => ['#10b981','#059669','#047857','#065f46','#064e3b'][i % 5]} />
+                        </Stack>
+                      </Card>
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><Text fw={700}>Category coverage</Text></Group>
+                          <InlineBar entries={insightCategoryBuckets.map((b) => [b.label, b.value] as [string, number])} colorFn={(_, i) => barColor(i)} />
+                        </Stack>
+                      </Card>
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><Text fw={700}>Status distribution</Text></Group>
+                          <InlineBar entries={statusEntries} colorFn={(label) => statusColor(label)} />
+                        </Stack>
+                      </Card>
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><Text fw={700}>Priority distribution</Text></Group>
+                          <InlineBar entries={priorityEntries} colorFn={(label) => priorityColor(label)} />
+                        </Stack>
+                      </Card>
+                    </SimpleGrid>
+
+                    {/* Average duration by owner */}
+                    <Card radius="xl" padding="lg" className="surface-card">
+                      <Stack gap="sm">
+                        <Text fw={700}>Average duration by owner</Text>
+                        <Text size="xs" c="dimmed">Mean activity span in days per owner, sorted by longest first</Text>
+                        <InlineBar
+                          entries={insightDurationByOwner.map((b) => [b.label, b.value] as [string, number])}
+                          colorFn={(_, i) => ['#06b6d4','#0891b2','#0e7490','#155e75','#164e63'][i % 5]}
+                        />
+                      </Stack>
+                    </Card>
+
+                    {/* Effort vs Impact heatmap */}
                     <HeatmapPlot
                       title="Effort vs impact"
                       subtitle="Where the current workload sits in the effort-impact matrix"
@@ -7205,35 +7368,9 @@ function App() {
                       valueMode={heatmapValueMode}
                       onValueModeChange={setHeatmapValueMode}
                     />
-                    <RankedPlot
-                      title="Top owners"
-                      subtitle="Who appears most often in the filtered record set"
-                      data={insightOwnerBuckets}
-                    />
-                    <RankedPlot
-                      title="Department coverage"
-                      subtitle="How often departments are involved across saved work"
-                      data={insightDepartmentBuckets}
-                    />
-                    <RankedPlot
-                      title="Project coverage"
-                      subtitle="Projects receiving the most tracked activity"
-                      data={insightProjectBuckets}
-                    />
-                    <RankedPlot
-                      title="Average duration by owner"
-                      subtitle="Which owners tend to have longer-running activities"
-                      data={insightDurationByOwner}
-                    />
-                  </SimpleGrid>
-
-                  <RankedPlot
-                    title="Category coverage"
-                    subtitle="Categories most represented in the current filtered slice"
-                    data={insightCategoryBuckets}
-                  />
-                </>
-              )}
+                  </Stack>
+                )
+              })()}
             </Stack>
           ) : currentPage === 'weekly' ? (
             <Stack gap="lg">
@@ -8003,7 +8140,7 @@ function App() {
                   <Text className="eyebrow">Key Debug</Text>
                   <Title order={2} className="form-title">Debug repository</Title>
                   <Text className="form-copy">
-                    {debugRecords.length} entr{debugRecords.length === 1 ? 'y' : 'ies'} stored
+                    {filteredDebugRecords.length} of {debugRecords.length} entr{debugRecords.length === 1 ? 'y' : 'ies'}
                   </Text>
                 </div>
                 <Group gap="sm">
@@ -8017,17 +8154,6 @@ function App() {
                 </Group>
               </div>
 
-              <TextInput
-                placeholder="Search entries…"
-                value={debugSearchTerm}
-                onChange={(e) => setDebugSearchTerm(e.currentTarget.value)}
-                radius="md"
-                rightSection={debugSearchTerm ? (
-                  <ActionIcon size="sm" variant="subtle" onClick={() => setDebugSearchTerm('')}>
-                    <IconX size={14} />
-                  </ActionIcon>
-                ) : null}
-              />
 
               {isLoadingDebugRecords ? (
                 <Stack gap="sm">
@@ -8046,19 +8172,20 @@ function App() {
                 </Card>
               ) : (
                 <Stack gap="sm">
-                  {debugRecords
-                    .filter((r) => {
-                      const q = debugSearchTerm.toLowerCase()
-                      if (!q) return true
-                      return (
-                        r.supplier.toLowerCase().includes(q) ||
-                        r.component.toLowerCase().includes(q) ||
-                        r.description.toLowerCase().includes(q) ||
-                        r.projects.some((p) => p.toLowerCase().includes(q)) ||
-                        r.departments.some((d) => d.toLowerCase().includes(q)) ||
-                        r.category.some((c) => c.toLowerCase().includes(q))
-                      )
-                    })
+                  {filteredDebugRecords.length === 0 && hasActiveDebugFilters ? (
+                    <Card radius="xl" padding="lg" className="surface-card">
+                      <Stack align="center" gap="sm" py="xl">
+                        <ThemeIcon size="xl" radius="xl" variant="light" color="gray">
+                          <IconBug size={24} />
+                        </ThemeIcon>
+                        <Text fw={600}>No entries match the current filters</Text>
+                        <Button variant="subtle" color="gray" radius="xl" onClick={() => setDebugFilters({ searchTerm: '', projects: [], departments: [], categories: [], suppliers: [], occurrencePhases: [], outcomes: [] })}>
+                          Clear filters
+                        </Button>
+                      </Stack>
+                    </Card>
+                  ) : null}
+                  {filteredDebugRecords
                     .map((record) => {
                       const isExpanded = selectedDebugRecordId === record.id
                       return (
@@ -8275,87 +8402,306 @@ function App() {
                   <Text className="eyebrow">Key Debug</Text>
                   <Title order={2} className="form-title">Debug insights</Title>
                   <Text className="form-copy">
-                    Analytics across {debugRecords.length} debug entr{debugRecords.length === 1 ? 'y' : 'ies'}.
+                    Analytics across {filteredDebugRecords.length} debug entr{filteredDebugRecords.length === 1 ? 'y' : 'ies'}
+                    {hasActiveDebugFilters ? ` (filtered from ${debugRecords.length} total)` : ''}.
                   </Text>
                 </div>
               </div>
 
-              {debugRecords.length === 0 ? (
+              {filteredDebugRecords.length === 0 ? (
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Stack align="center" gap="sm" py="xl">
                     <ThemeIcon size="xl" radius="xl" variant="light" color="gray">
                       <IconChartBar size={24} />
                     </ThemeIcon>
-                    <Text fw={600}>No data yet</Text>
-                    <Text size="sm" c="dimmed">Add debug entries to see analytics.</Text>
+                    <Text fw={600}>{debugRecords.length === 0 ? 'No data yet' : 'No entries match the current filters'}</Text>
+                    <Text size="sm" c="dimmed">{debugRecords.length === 0 ? 'Add debug entries to see analytics.' : 'Adjust or clear the filters above.'}</Text>
+                    {hasActiveDebugFilters ? (
+                      <Button variant="subtle" color="gray" radius="xl" onClick={() => setDebugFilters({ searchTerm: '', projects: [], departments: [], categories: [], suppliers: [], occurrencePhases: [], outcomes: [] })}>
+                        Clear filters
+                      </Button>
+                    ) : null}
                   </Stack>
                 </Card>
-              ) : (
-                <Stack gap="md">
-                  <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
-                    {[
-                      { label: 'Total entries', value: debugRecords.length },
-                      { label: 'HW entries', value: debugRecords.filter((r) => r.category.includes('HW')).length },
-                      { label: 'SW entries', value: debugRecords.filter((r) => r.category.includes('SW')).length },
-                      { label: 'System entries', value: debugRecords.filter((r) => r.category.includes('System')).length },
-                    ].map(({ label, value }) => (
-                      <Card key={label} radius="xl" padding="md" className="surface-card">
-                        <Stack gap={2} align="center">
-                          <Text size="xl" fw={700}>{value}</Text>
-                          <Text size="xs" c="dimmed" ta="center">{label}</Text>
+              ) : (() => {
+                const dr = filteredDebugRecords
+                // ── pre-compute all analytics ──────────────────────────────
+                const hwCount = dr.filter((r) => r.category.includes('HW')).length
+                const swCount = dr.filter((r) => r.category.includes('SW')).length
+                const sysCount = dr.filter((r) => r.category.includes('System')).length
+                const lessonCount = dr.reduce((s, r) => s + (r.lessonsLearnt ?? []).length, 0)
+                const totalDemerit = dr.reduce((s, r) => s + (Number(r.demerit) || 0), 0)
+                const avgDemerit = dr.length > 0 ? (totalDemerit / dr.length).toFixed(1) : '0'
+
+                const countBy = (key: (r: typeof dr[0]) => string | string[]) => {
+                  const map: Record<string, number> = {}
+                  for (const r of dr) {
+                    const val = key(r)
+                    const vals = Array.isArray(val) ? val : [val]
+                    for (const v of vals) if (v) map[v] = (map[v] ?? 0) + 1
+                  }
+                  return Object.entries(map).sort(([,a],[,b]) => b - a)
+                }
+
+                const projectCounts = countBy((r) => r.projects)
+                const deptCounts = countBy((r) => r.departments)
+                const supplierCounts = countBy((r) => r.supplier)
+                const phaseCounts = countBy((r) => r.occurrencePhase)
+                const componentCounts = countBy((r) => r.component)
+
+                // demerit distribution — numeric buckets
+                const demeritBuckets: Record<string, number> = {}
+                for (const r of dr) {
+                  const v = Number(r.demerit)
+                  const label = isNaN(v) ? String(r.demerit || 'N/A') : v === 0 ? 'None' : String(v)
+                  demeritBuckets[label] = (demeritBuckets[label] ?? 0) + 1
+                }
+                const demeritEntries = Object.entries(demeritBuckets).sort(([,a],[,b]) => b - a)
+
+                // monthly trend
+                const monthMap: Record<string, number> = {}
+                for (const r of dr) {
+                  const label = dayjs(r.submittedAt).format('MMM YY')
+                  monthMap[label] = (monthMap[label] ?? 0) + 1
+                }
+                const monthEntries = Object.entries(monthMap).sort(([a],[b]) =>
+                  dayjs(a, 'MMM YY').valueOf() - dayjs(b, 'MMM YY').valueOf()
+                )
+                const maxMonth = Math.max(...monthEntries.map(([,v]) => v), 1)
+
+                // supplier avg capability rating
+                const supplierRatingSums: Record<string, { sum: number; count: number }> = {}
+                for (const r of dr) {
+                  if (!r.supplier) continue
+                  const avg = r.supplierRating?.length
+                    ? r.supplierRating.reduce((s, e) => s + e.rating, 0) / r.supplierRating.length
+                    : null
+                  if (avg === null) continue
+                  const e = supplierRatingSums[r.supplier] ?? { sum: 0, count: 0 }
+                  e.sum += avg; e.count += 1
+                  supplierRatingSums[r.supplier] = e
+                }
+                const supplierAvgRating = Object.entries(supplierRatingSums)
+                  .map(([label, { sum, count }]) => ({ label, value: sum / count }))
+                  .sort((a, b) => b.value - a.value)
+
+                // outcome stacked by category
+                const outcomeCatMap: Record<string, { HW: number; SW: number; System: number }> = {}
+                for (const r of dr) {
+                  for (const o of r.outcome ?? []) {
+                    const e = outcomeCatMap[o] ?? { HW: 0, SW: 0, System: 0 }
+                    if (r.category.includes('HW')) e.HW += 1
+                    if (r.category.includes('SW')) e.SW += 1
+                    if (r.category.includes('System')) e.System += 1
+                    outcomeCatMap[o] = e
+                  }
+                }
+                const outcomeCatEntries = Object.entries(outcomeCatMap)
+                  .sort(([,a],[,b]) => (b.HW + b.SW + b.System) - (a.HW + a.SW + a.System))
+
+                const maxVal = (entries: [string, number][]) => Math.max(...entries.map(([,v]) => v), 1)
+                const barColor = (i: number) =>
+                  ['#3b82f6','#f59e0b','#10b981','#ef4444','#8b5cf6','#f97316','#06b6d4','#ec4899'][i % 8]
+
+                const BarChart = ({ entries, limit = 8, colorFn = (_l: string, i: number) => barColor(i) }: {
+                  entries: [string, number][]
+                  limit?: number
+                  colorFn?: (label: string, i: number) => string
+                }) => {
+                  const mx = maxVal(entries)
+                  return (
+                    <Stack gap={6}>
+                      {entries.slice(0, limit).map(([label, count], i) => (
+                        <div key={label}>
+                          <Group justify="space-between" mb={3}>
+                            <Text size="xs" truncate style={{ maxWidth: '65%' }}>{label}</Text>
+                            <Text size="xs" fw={700}>{count}</Text>
+                          </Group>
+                          <div style={{ height: 7, borderRadius: 4, background: 'var(--jira-bg-muted)', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${(count / mx) * 100}%`, background: colorFn(label, i), borderRadius: 4, transition: 'width 400ms ease' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </Stack>
+                  )
+                }
+
+                return (
+                  <Stack gap="md">
+                    {/* ── KPI strip ── */}
+                    <SimpleGrid cols={{ base: 2, sm: 4, md: 6 }} spacing="sm">
+                      {[
+                        { label: 'Total issues', value: dr.length, color: 'blue' },
+                        { label: 'HW', value: hwCount, color: 'orange' },
+                        { label: 'SW', value: swCount, color: 'blue' },
+                        { label: 'System', value: sysCount, color: 'teal' },
+                        { label: 'Avg demerit', value: avgDemerit, color: 'red' },
+                        { label: 'Lessons learnt', value: lessonCount, color: 'yellow' },
+                      ].map(({ label, value, color }) => (
+                        <Card key={label} radius="xl" padding="sm" className="surface-card" style={{ borderTop: `3px solid var(--mantine-color-${color}-5)` }}>
+                          <Stack gap={2} align="center">
+                            <Text size="lg" fw={800}>{value}</Text>
+                            <Text size="xs" c="dimmed" ta="center">{label}</Text>
+                          </Stack>
+                        </Card>
+                      ))}
+                    </SimpleGrid>
+
+                    {/* ── Monthly trend ── */}
+                    <Card radius="xl" padding="lg" className="surface-card">
+                      <Stack gap="sm">
+                        <Text fw={700}>Monthly issue intake</Text>
+                        <Text size="xs" c="dimmed">Number of debug entries submitted per month</Text>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 80, overflowX: 'auto', paddingBottom: 4 }}>
+                          {monthEntries.map(([label, count]) => (
+                            <div key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0, minWidth: 36 }}>
+                              <Text size="xs" fw={700} c="blue">{count}</Text>
+                              <div style={{ width: 28, height: `${Math.max(6, (count / maxMonth) * 60)}px`, background: 'var(--mantine-color-blue-5)', borderRadius: '4px 4px 0 0', transition: 'height 300ms ease' }} />
+                              <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap', transform: 'rotate(-35deg)', transformOrigin: 'top center', marginTop: 6 }}>{label}</Text>
+                            </div>
+                          ))}
+                        </div>
+                      </Stack>
+                    </Card>
+
+                    {/* ── Main breakdown grid ── */}
+                    <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><IconFolders size={15} /><Text fw={700}>By project</Text></Group>
+                          <BarChart entries={projectCounts} colorFn={(_, i) => ['#3b82f6','#6366f1','#8b5cf6','#a855f7'][i % 4]} />
                         </Stack>
                       </Card>
-                    ))}
-                  </SimpleGrid>
 
-                  {(() => {
-                    const projectCounts: Record<string, number> = {}
-                    const deptCounts: Record<string, number> = {}
-                    const mfrCounts: Record<string, number> = {}
-                    for (const r of debugRecords) {
-                      for (const p of r.projects) projectCounts[p] = (projectCounts[p] ?? 0) + 1
-                      for (const d of r.departments) deptCounts[d] = (deptCounts[d] ?? 0) + 1
-                      if (r.supplier) mfrCounts[r.supplier] = (mfrCounts[r.supplier] ?? 0) + 1
-                    }
-                    const toSorted = (obj: Record<string, number>) =>
-                      Object.entries(obj).sort(([,a],[,b]) => b - a)
-                    const maxVal = (entries: [string, number][]) => Math.max(...entries.map(([,v]) => v), 1)
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><IconUsersGroup size={15} /><Text fw={700}>By department</Text></Group>
+                          <BarChart entries={deptCounts} colorFn={(_, i) => ['#10b981','#059669','#047857','#065f46'][i % 4]} />
+                        </Stack>
+                      </Card>
 
-                    return (
-                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-                        {[
-                          { title: 'By project', entries: toSorted(projectCounts) },
-                          { title: 'By department', entries: toSorted(deptCounts) },
-                          { title: 'By supplier', entries: toSorted(mfrCounts) },
-                        ].map(({ title, entries }) => (
-                          <Card key={title} radius="xl" padding="lg" className="surface-card">
-                            <Stack gap="sm">
-                              <Text fw={700}>{title}</Text>
-                              {entries.length === 0 ? (
-                                <Text size="sm" c="dimmed">No data</Text>
-                              ) : (
-                                entries.slice(0, 8).map(([label, count]) => (
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><IconTool size={15} /><Text fw={700}>By supplier</Text></Group>
+                          <BarChart entries={supplierCounts} colorFn={(_, i) => ['#f59e0b','#d97706','#b45309','#92400e'][i % 4]} />
+                        </Stack>
+                      </Card>
+
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><IconSettings size={15} /><Text fw={700}>By occurrence phase</Text></Group>
+                          {phaseCounts.length === 0 ? <Text size="sm" c="dimmed">No data</Text> : (
+                            <Stack gap={6}>
+                              {phaseCounts.map(([label, count]) => {
+                                const pct = Math.round((count / debugRecords.length) * 100)
+                                const col = label === 'Development' ? '#3b82f6' : label === 'Qualification' ? '#f59e0b' : '#10b981'
+                                return (
                                   <div key={label}>
-                                    <Group justify="space-between" mb={4}>
-                                      <Text size="sm">{label}</Text>
-                                      <Text size="sm" fw={600}>{count}</Text>
+                                    <Group justify="space-between" mb={3}>
+                                      <Text size="xs">{label}</Text>
+                                      <Group gap={4}><Text size="xs" fw={700}>{count}</Text><Text size="xs" c="dimmed">({pct}%)</Text></Group>
                                     </Group>
-                                    <Progress
-                                      value={(count / maxVal(entries)) * 100}
-                                      radius="xl"
-                                      size="sm"
-                                    />
+                                    <div style={{ height: 7, borderRadius: 4, background: 'var(--jira-bg-muted)', overflow: 'hidden' }}>
+                                      <div style={{ height: '100%', width: `${pct}%`, background: col, borderRadius: 4 }} />
+                                    </div>
                                   </div>
-                                ))
-                              )}
+                                )
+                              })}
                             </Stack>
-                          </Card>
-                        ))}
-                      </SimpleGrid>
-                    )
-                  })()}
-                </Stack>
-              )}
+                          )}
+                        </Stack>
+                      </Card>
+
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><IconAlertTriangle size={15} /><Text fw={700}>Demerit distribution</Text></Group>
+                          <BarChart entries={demeritEntries} colorFn={(label) => {
+                            const n = Number(label)
+                            if (isNaN(n) || n === 0 || label === 'None') return '#6b7280'
+                            if (n >= 100) return '#ef4444'
+                            if (n >= 40) return '#f97316'
+                            if (n >= 20) return '#f59e0b'
+                            return '#10b981'
+                          }} />
+                        </Stack>
+                      </Card>
+
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Group gap="xs"><IconBug size={15} /><Text fw={700}>Top components</Text></Group>
+                          <BarChart entries={componentCounts} colorFn={(_, i) => ['#8b5cf6','#7c3aed','#6d28d9','#5b21b6'][i % 4]} />
+                        </Stack>
+                      </Card>
+                    </SimpleGrid>
+
+                    {/* ── Outcomes by category ── */}
+                    <Card radius="xl" padding="lg" className="surface-card">
+                      <Stack gap="sm">
+                        <Text fw={700}>Outcomes by category</Text>
+                        <Text size="xs" c="dimmed">How many times each outcome was recorded, split by HW / SW / System</Text>
+                        {outcomeCatEntries.length === 0 ? <Text size="sm" c="dimmed">No data</Text> : (
+                          <Stack gap={8}>
+                            {outcomeCatEntries.slice(0, 7).map(([outcome, counts]) => {
+                              const total = counts.HW + counts.SW + counts.System
+                              const maxOutcome = Math.max(...outcomeCatEntries.map(([,c]) => c.HW + c.SW + c.System), 1)
+                              return (
+                                <div key={outcome}>
+                                  <Group justify="space-between" mb={3}>
+                                    <Text size="xs" truncate style={{ maxWidth: '55%' }}>{outcome}</Text>
+                                    <Group gap={8}>
+                                      {counts.HW > 0 && <Badge size="xs" color="orange" variant="light">HW {counts.HW}</Badge>}
+                                      {counts.SW > 0 && <Badge size="xs" color="blue" variant="light">SW {counts.SW}</Badge>}
+                                      {counts.System > 0 && <Badge size="xs" color="teal" variant="light">Sys {counts.System}</Badge>}
+                                    </Group>
+                                  </Group>
+                                  <div style={{ height: 8, borderRadius: 4, background: 'var(--jira-bg-muted)', overflow: 'hidden', display: 'flex' }}>
+                                    {counts.HW > 0 && <div style={{ height: '100%', width: `${(counts.HW / maxOutcome) * 100}%`, background: '#f97316' }} />}
+                                    {counts.SW > 0 && <div style={{ height: '100%', width: `${(counts.SW / maxOutcome) * 100}%`, background: '#3b82f6' }} />}
+                                    {counts.System > 0 && <div style={{ height: '100%', width: `${(counts.System / maxOutcome) * 100}%`, background: '#10b981' }} />}
+                                  </div>
+                                  <Text size="xs" c="dimmed" ta="right">{total} total</Text>
+                                </div>
+                              )
+                            })}
+                            <Group gap="md" mt={4}>
+                              <Group gap={4}><div style={{ width: 10, height: 10, borderRadius: 2, background: '#f97316' }} /><Text size="xs" c="dimmed">HW</Text></Group>
+                              <Group gap={4}><div style={{ width: 10, height: 10, borderRadius: 2, background: '#3b82f6' }} /><Text size="xs" c="dimmed">SW</Text></Group>
+                              <Group gap={4}><div style={{ width: 10, height: 10, borderRadius: 2, background: '#10b981' }} /><Text size="xs" c="dimmed">System</Text></Group>
+                            </Group>
+                          </Stack>
+                        )}
+                      </Stack>
+                    </Card>
+
+                    {/* ── Supplier capability ratings ── */}
+                    {supplierAvgRating.length > 0 && (
+                      <Card radius="xl" padding="lg" className="surface-card">
+                        <Stack gap="sm">
+                          <Text fw={700}>Supplier capability rating</Text>
+                          <Text size="xs" c="dimmed">Average across Responsiveness, Evidence quality, Containment speed, Fix robustness (scale 0–5)</Text>
+                          <Stack gap={6}>
+                            {supplierAvgRating.map(({ label, value }) => {
+                              const pct = (value / 5) * 100
+                              const col = value >= 4 ? '#10b981' : value >= 3 ? '#f59e0b' : '#ef4444'
+                              return (
+                                <div key={label}>
+                                  <Group justify="space-between" mb={3}>
+                                    <Text size="xs">{label}</Text>
+                                    <Text size="xs" fw={700}>{value.toFixed(2)} / 5</Text>
+                                  </Group>
+                                  <div style={{ height: 7, borderRadius: 4, background: 'var(--jira-bg-muted)', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', width: `${pct}%`, background: col, borderRadius: 4 }} />
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </Stack>
+                        </Stack>
+                      </Card>
+                    )}
+                  </Stack>
+                )
+              })()}
             </Stack>
           ) : currentPage === 'debug-admin' ? (
             <Stack gap="lg">

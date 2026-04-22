@@ -177,8 +177,15 @@ export async function deleteActivityComment(
 export async function replaceDatabaseRecords(
   records: ActivityRecord[],
   settings?: TrackerSettings,
+  debugRecords?: DebugRecord[],
+  debugSettings?: DebugSettings,
 ) {
-  return invoke<SubmitResult>('replace_database_records', { records, settings: settings ?? null })
+  return invoke<SubmitResult>('replace_database_records', {
+    records,
+    settings: settings ?? null,
+    debugRecords: debugRecords ?? null,
+    debugSettings: debugSettings ?? null,
+  })
 }
 
 export async function restoreDatabaseBackup(backupPath: string) {

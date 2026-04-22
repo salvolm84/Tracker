@@ -1500,6 +1500,8 @@ fn replace_database_records(
     state: State<'_, SaveLock>,
     records: Vec<ActivityRecord>,
     settings: Option<TrackerSettings>,
+    debug_records: Option<Vec<DebugRecord>>,
+    debug_settings: Option<DebugSettings>,
 ) -> Result<SubmitResult, String> {
     let _guard = state
         .0
@@ -1510,7 +1512,7 @@ fn replace_database_records(
     let mut backup_path = None;
     let record_count = with_exclusive_db_lock(&db_path, |db_path| {
         backup_path = create_database_backup(db_path)?;
-        replace_records_in_database(db_path, records, settings)
+        replace_records_in_database(db_path, records, settings, debug_records, debug_settings)
     })?;
 
     submit_result(&db_path, record_count, backup_path)
@@ -2293,6 +2295,8 @@ fn replace_records_in_database(
     db_path: &Path,
     records: Vec<ActivityRecord>,
     settings: Option<TrackerSettings>,
+    debug_records: Option<Vec<DebugRecord>>,
+    debug_settings: Option<DebugSettings>,
 ) -> Result<usize, String> {
     let settings = sanitize_settings(settings.unwrap_or_else(default_tracker_settings))?;
     let mut sanitized_records = sanitize_imported_records(records, &settings)?;
@@ -2304,6 +2308,12 @@ fn replace_records_in_database(
                 attachments::externalize(db_path, std::mem::take(&mut comment.attachments))?;
         }
     }
+    // When debug data is not provided in the import, preserve the existing debug data
+    let existing = read_database_unlocked(db_path).ok();
+    let final_debug_records = debug_records
+        .unwrap_or_else(|| existing.as_ref().map(|db| db.debug_records.clone()).unwrap_or_default());
+    let final_debug_settings = debug_settings
+        .unwrap_or_else(|| existing.as_ref().map(|db| db.debug_settings.clone()).unwrap_or_else(default_debug_settings));
     persist_database(
         db_path,
         &TrackerDatabase {
@@ -2311,8 +2321,8 @@ fn replace_records_in_database(
             revision: 0,
             settings,
             records: sanitized_records.clone(),
-            debug_records: Vec::new(),
-            debug_settings: default_debug_settings(),
+            debug_records: final_debug_records,
+            debug_settings: final_debug_settings,
         },
     )?;
     Ok(sanitized_records.len())
