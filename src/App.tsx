@@ -18,7 +18,6 @@ import {
   SegmentedControl,
   SimpleGrid,
   Skeleton,
-  Slider,
   Stack,
   Text,
   TextInput,
@@ -29,11 +28,6 @@ import {
   useMantineColorScheme,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from '@tauri-apps/plugin-notification'
 import { DateInput } from '@mantine/dates'
 import { useForm } from '@mantine/form'
 import {
@@ -133,14 +127,38 @@ import type {
   QuickUpdatePayload,
   RecordComment,
   RecordHistoryEntry,
-  ReminderCadence,
-  ReminderCadenceOption,
   StatsFilters,
   TrackerSettings,
 } from './types'
 import './App.css'
 
 dayjs.extend(isoWeek)
+
+const TRACKER_NAME = 'Tracker'
+const TRACKER_SHORT_NAME = 'TRK'
+const ADMIN_PASSWORD = 'strasburgo'
+const DEMERIT_OPTIONS = ['DEM100', 'DEM40', 'DEM20FS', 'DEM20', 'DEM10FS', 'DEM10', 'DEM1', 'NA']
+
+function normalizeDemeritValue(value: string | number | null | undefined): string {
+  if (typeof value === 'number') {
+    const mapped = `DEM${value}`
+    return DEMERIT_OPTIONS.includes(mapped) ? mapped : 'NA'
+  }
+
+  const normalized = value?.trim().toUpperCase()
+  if (!normalized) return 'NA'
+  if (DEMERIT_OPTIONS.includes(normalized)) return normalized
+
+  const numericAlias = `DEM${normalized}`
+  return DEMERIT_OPTIONS.includes(numericAlias) ? numericAlias : 'NA'
+}
+
+function demeritBadgeColor(value: string): string {
+  if (value === 'DEM100') return 'red'
+  if (value === 'DEM40' || value === 'DEM20FS' || value === 'DEM20') return 'orange'
+  if (value === 'NA') return 'gray'
+  return 'yellow'
+}
 
 const LESSON_CATEGORIES: { value: string; color: string; icon: React.ElementType }[] = [
   { value: 'Insight',       color: 'yellow', icon: IconBulb },
@@ -185,7 +203,6 @@ type SettingsFieldKey =
   | 'efforts'
   | 'impacts'
   | 'statuses'
-  | 'reminderCadences'
 type SettingsUsageReference = {
   recordId: string
   title: string
@@ -216,7 +233,6 @@ type FormTemplate = {
     impact: string | null
     priority: string | null
     status: string | null
-    reminderCadence: string | null
     categories: string[]
   }
 }
@@ -265,7 +281,6 @@ const initialValues: ActivityFormValues = {
   impact: null,
   priority: null,
   status: defaultTrackerSettings.statuses[1] ?? defaultTrackerSettings.statuses[0] ?? null,
-  reminderCadence: defaultTrackerSettings.reminderCadences[0]?.label ?? null,
   categories: [],
   attachments: [],
   labActivity: 'None',
@@ -343,8 +358,14 @@ function formatCommentDate(value: string) {
   return dayjs(value).format('ddd DD MMM')
 }
 
+function formatCommentAuthor(author?: string | null) {
+  return author?.trim() || 'Unknown user'
+}
+
 function formatDateRange(startDate: string, endDate: string) {
-  return `${dayjs(startDate).format('DD MMM YYYY')} - ${dayjs(endDate).format('DD MMM YYYY')}`
+  const formattedStart = dayjs(startDate).format('DD MMM YYYY')
+  const formattedEnd = endDate ? dayjs(endDate).format('DD MMM YYYY') : 'Open'
+  return `${formattedStart} - ${formattedEnd}`
 }
 
 function formatWeeklyRange(year: number, week: number) {
@@ -371,7 +392,7 @@ function formatMetricNumber(value: number) {
 
 function durationDays(record: ActivityRecord) {
   const startDate = dayjs(record.startDate)
-  const endDate = dayjs(record.endDate)
+  const endDate = record.endDate ? dayjs(record.endDate) : dayjs()
   const diff = endDate.diff(startDate, 'day')
 
   return Math.max(diff, 0) + 1
@@ -575,7 +596,7 @@ function buildMonthlyOpenActivityBuckets(
   }
 
   const starts = records.map((record) => dayjs(record.startDate))
-  const ends = records.map((record) => dayjs(record.endDate))
+  const ends = records.map((record) => (record.endDate ? dayjs(record.endDate) : dayjs()))
   const firstMonth = starts
     .reduce((earliest, value) => (value.isBefore(earliest) ? value : earliest), starts[0])
     .startOf('month')
@@ -593,7 +614,7 @@ function buildMonthlyOpenActivityBuckets(
     const monthEnd = cursor.endOf('month')
     const openRecords = records.filter((record) => {
       const recordStart = dayjs(record.startDate).startOf('day')
-      const recordEnd = dayjs(record.endDate).endOf('day')
+      const recordEnd = record.endDate ? dayjs(record.endDate).endOf('day') : dayjs().endOf('day')
 
       return (
         !recordStart.isAfter(monthEnd, 'day') &&
@@ -679,16 +700,6 @@ const settingsFieldDefinitions: Array<{
     isUsedByRecord: (record, value) => record.status === value,
     draftLine: (_settings, value) => value,
   },
-  {
-    key: 'reminderCadences',
-    label: 'Reminder cadence',
-    values: (settings) => settings.reminderCadences.map((entry) => entry.label),
-    isUsedByRecord: (record, value) => record.reminderCadence === value,
-    draftLine: (settings, value) => {
-      const entry = settings.reminderCadences.find((option) => option.label === value)
-      return entry ? `${entry.label} | ${entry.intervalDays}` : value
-    },
-  },
 ]
 
 function settingsFromBootstrap(bootstrap: BootstrapPayload): TrackerSettings {
@@ -746,22 +757,6 @@ function uniqueTrimmedLines(value: string) {
 
 function serializeStringLines(values: string[]) {
   return values.join('\n')
-}
-
-function serializeReminderCadenceLines(values: ReminderCadenceOption[]) {
-  return values.map((entry) => `${entry.label} | ${entry.intervalDays}`).join('\n')
-}
-
-function parseReminderCadenceLines(value: string) {
-  return uniqueTrimmedLines(value).map((entry) => {
-    const [labelPart, intervalPart] = entry.split('|').map((segment) => segment.trim())
-    const intervalDays = Number(intervalPart)
-
-    return {
-      label: labelPart ?? '',
-      intervalDays: Number.isFinite(intervalDays) && intervalDays >= 0 ? intervalDays : NaN,
-    }
-  })
 }
 
 function normalizeSingleValue(value: string | null, allowed: string[]) {
@@ -874,18 +869,6 @@ function safeLoadSavedViews() {
   }
 }
 
-function reminderIntervalDays(
-  cadence: ReminderCadence,
-  reminderCadences: ReminderCadenceOption[],
-) {
-  const match = reminderCadences.find((entry) => entry.label === cadence)
-  if (!match || match.intervalDays <= 0) {
-    return null
-  }
-
-  return match.intervalDays
-}
-
 function recordTimelineMoments(record: ActivityRecord) {
   return [
     dayjs(record.lastModifiedAt || record.submittedAt),
@@ -907,44 +890,30 @@ function isConcurrencyConflictMessage(message: string) {
   return message.toLowerCase().includes('concurrency conflict')
 }
 
-function reminderDueMoment(
-  record: ActivityRecord,
-  reminderCadences: ReminderCadenceOption[],
-) {
-  const intervalDays = reminderIntervalDays(record.reminderCadence, reminderCadences)
-  if (!intervalDays) {
-    return null
-  }
-
-  return latestRecordMoment(record).add(intervalDays, 'day')
+function isAdminPage(page: PageKey) {
+  return page === 'admin' || page === 'debug-admin'
 }
 
-function recordSignalState(
-  record: ActivityRecord,
-  reminderCadences: ReminderCadenceOption[],
-) {
+function recordSignalState(record: ActivityRecord) {
   const today = dayjs().endOf('day')
-  const endDate = dayjs(record.endDate)
+  const endDate = record.endDate ? dayjs(record.endDate) : null
   const latestMoment = latestRecordMoment(record)
-  const reminderDue = reminderDueMoment(record, reminderCadences)
   const isCompleted = record.status.toLowerCase() === 'completed'
 
   return {
-    overdue: !isCompleted && endDate.isBefore(today, 'day'),
+    overdue: !isCompleted && endDate !== null && endDate.isBefore(today, 'day'),
     dueSoon:
       !isCompleted &&
+      endDate !== null &&
       !endDate.isBefore(today, 'day') &&
       endDate.diff(dayjs().startOf('day'), 'day') <= 7,
     stale: !isCompleted && dayjs().diff(latestMoment, 'day') >= 14,
-    reminderDue:
-      !isCompleted && reminderDue !== null && reminderDue.isBefore(today.add(1, 'millisecond')),
-    reminderDate: reminderDue,
     latestMoment,
   }
 }
 
-function signalBadges(record: ActivityRecord, reminderCadences: ReminderCadenceOption[]) {
-  const signals = recordSignalState(record, reminderCadences)
+function signalBadges(record: ActivityRecord) {
+  const signals = recordSignalState(record)
   const badges: Array<{ label: string; color: string }> = []
 
   if (signals.overdue) {
@@ -955,10 +924,6 @@ function signalBadges(record: ActivityRecord, reminderCadences: ReminderCadenceO
 
   if (signals.stale) {
     badges.push({ label: 'Stale', color: 'orange' })
-  }
-
-  if (signals.reminderDue) {
-    badges.push({ label: 'Reminder due', color: 'grape' })
   }
 
   return badges
@@ -1875,204 +1840,6 @@ function AdminCategoryImpactEditor({
   )
 }
 
-function AdminReminderCadenceEditor({
-  value,
-  onChange,
-}: {
-  value: string
-  onChange: (value: string) => void
-}) {
-  const [newLabel, setNewLabel] = useState('')
-  const [newDays, setNewDays] = useState('0')
-  const [editingIndex, setEditingIndex] = useState<number | null>(null)
-  const [editingLabel, setEditingLabel] = useState('')
-  const [editingDays, setEditingDays] = useState('')
-  const items = parseReminderCadenceLines(value)
-
-  function commitItems(nextItems: ReminderCadenceOption[]) {
-    onChange(serializeReminderCadenceLines(nextItems))
-  }
-
-  function parseDays(rawValue: string) {
-    const parsed = Number(rawValue)
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
-  }
-
-  function handleAddItem() {
-    const label = newLabel.trim()
-    const intervalDays = parseDays(newDays)
-    if (!label || intervalDays === null) {
-      return
-    }
-
-    commitItems([...items, { label, intervalDays }])
-    setNewLabel('')
-    setNewDays('0')
-  }
-
-  function handleStartEdit(index: number, item: ReminderCadenceOption) {
-    setEditingIndex(index)
-    setEditingLabel(item.label)
-    setEditingDays(Number.isNaN(item.intervalDays) ? '' : String(item.intervalDays))
-  }
-
-  function handleSaveEdit(index: number) {
-    const label = editingLabel.trim()
-    const intervalDays = parseDays(editingDays)
-    if (!label || intervalDays === null) {
-      return
-    }
-
-    commitItems(
-      items.map((item, itemIndex) =>
-        itemIndex === index ? { label, intervalDays } : item,
-      ),
-    )
-    setEditingIndex(null)
-    setEditingLabel('')
-    setEditingDays('')
-  }
-
-  return (
-    <Card radius="xl" padding="lg" className="surface-card admin-list-card">
-      <Stack gap="md">
-        <Group justify="space-between" align="flex-start">
-          <div>
-            <Text fw={700}>Reminder cadences</Text>
-            <Text size="sm" c="dimmed">
-              Configure reminder names and their interval in days.
-            </Text>
-          </div>
-          <Badge variant="light" color="blue" radius="xl">
-            {items.length} cadence{items.length === 1 ? '' : 's'}
-          </Badge>
-        </Group>
-
-        <div className="admin-item-list">
-          {items.map((item, index) => (
-            <div className="admin-item-row" key={`${item.label}-${index}`}>
-              {editingIndex === index ? (
-                <div className="admin-reminder-edit">
-                  <TextInput
-                    label="Label"
-                    value={editingLabel}
-                    onChange={(event) => setEditingLabel(event.currentTarget.value)}
-                    autoFocus
-                  />
-                  <TextInput
-                    label="Days"
-                    type="number"
-                    min={0}
-                    value={editingDays}
-                    onChange={(event) => setEditingDays(event.currentTarget.value)}
-                  />
-                </div>
-              ) : (
-                <div className="admin-item-content">
-                  <Text fw={700}>{item.label || 'Unnamed cadence'}</Text>
-                  <Text size="xs" c={Number.isNaN(item.intervalDays) ? 'red' : 'dimmed'}>
-                    {Number.isNaN(item.intervalDays)
-                      ? 'Invalid interval'
-                      : item.intervalDays === 0
-                        ? 'No scheduled reminder'
-                        : `Every ${item.intervalDays} day${item.intervalDays === 1 ? '' : 's'}`}
-                  </Text>
-                </div>
-              )}
-
-              <Group gap="xs" className="admin-item-actions">
-                {editingIndex === index ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant="light"
-                      color="green"
-                      radius="xl"
-                      size="compact-sm"
-                      leftSection={<IconCheck size={14} />}
-                      onClick={() => handleSaveEdit(index)}
-                    >
-                      Save
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="subtle"
-                      color="gray"
-                      radius="xl"
-                      size="compact-sm"
-                      leftSection={<IconX size={14} />}
-                      onClick={() => {
-                        setEditingIndex(null)
-                        setEditingLabel('')
-                        setEditingDays('')
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button
-                      type="button"
-                      variant="subtle"
-                      color="blue"
-                      radius="xl"
-                      size="compact-sm"
-                      leftSection={<IconEdit size={14} />}
-                      onClick={() => handleStartEdit(index, item)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="subtle"
-                      color="red"
-                      radius="xl"
-                      size="compact-sm"
-                      leftSection={<IconTrash size={14} />}
-                      onClick={() =>
-                        commitItems(items.filter((_, itemIndex) => itemIndex !== index))
-                      }
-                    >
-                      Remove
-                    </Button>
-                  </>
-                )}
-              </Group>
-            </div>
-          ))}
-        </div>
-
-        <div className="admin-add-row admin-add-row-wide">
-          <TextInput
-            label="Add cadence"
-            placeholder="Label"
-            value={newLabel}
-            onChange={(event) => setNewLabel(event.currentTarget.value)}
-          />
-          <TextInput
-            label="Interval days"
-            type="number"
-            min={0}
-            value={newDays}
-            onChange={(event) => setNewDays(event.currentTarget.value)}
-          />
-          <Button
-            type="button"
-            radius="xl"
-            variant="light"
-            color="blue"
-            onClick={handleAddItem}
-            disabled={!newLabel.trim() || parseDays(newDays) === null}
-          >
-            Add
-          </Button>
-        </div>
-      </Stack>
-    </Card>
-  )
-}
-
 function App() {
   const { colorScheme, setColorScheme } = useMantineColorScheme()
   const activeColorScheme = colorScheme === 'auto' ? 'light' : colorScheme
@@ -2081,7 +1848,6 @@ function App() {
   const currentIsoWeekStart = dayjs().startOf('isoWeek')
   const currentIsoWeekEnd = dayjs().endOf('isoWeek')
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const notifiedRecordIds = useRef<Set<string>>(new Set())
   const dragCardRef = useRef<{ recordId: string; ghostEl: HTMLDivElement; grabOffsetX: number; grabOffsetY: number } | null>(null)
   const boardRecordsRef = useRef<ActivityRecord[]>([])
   const [currentPage, setCurrentPage] = useState<PageKey>('overview')
@@ -2108,8 +1874,6 @@ function App() {
   const [editingRecordVersion, setEditingRecordVersion] = useState<string | null>(null)
   const [quickOwner, setQuickOwner] = useState<string | null>(null)
   const [quickStatus, setQuickStatus] = useState<ActivityStatus | null>(null)
-  const [quickReminderCadence, setQuickReminderCadence] =
-    useState<ReminderCadence | null>(null)
   const [weeklyReportMode, setWeeklyReportMode] =
     useState<WeeklyReportMode>('week')
   const [weeklyTemplate, setWeeklyTemplate] = useState<WeeklyTemplate>('bullets')
@@ -2121,6 +1885,10 @@ function App() {
   const [weeklyRangeEnd, setWeeklyRangeEnd] = useState<Date | null>(
     currentIsoWeekEnd.toDate(),
   )
+  const [weeklyShowCommentDates, setWeeklyShowCommentDates] = useState(true)
+  const [weeklyShowRecordId, setWeeklyShowRecordId] = useState(true)
+  const [weeklyShowCategories, setWeeklyShowCategories] = useState(false)
+  const [weeklyShowDepartments, setWeeklyShowDepartments] = useState(false)
   const [weeklyCopyState, setWeeklyCopyState] = useState<'idle' | 'success' | 'error'>(
     'idle',
   )
@@ -2147,6 +1915,10 @@ function App() {
   const [debugSettingsError, setDebugSettingsError] = useState<string | null>(null)
   const [pendingNavPage, setPendingNavPage] = useState<PageKey | null>(null)
   const [showUnsavedNavModal, setShowUnsavedNavModal] = useState(false)
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false)
+  const [pendingAdminPage, setPendingAdminPage] = useState<PageKey | null>(null)
+  const [adminPasswordInput, setAdminPasswordInput] = useState('')
+  const [adminPasswordError, setAdminPasswordError] = useState<string | null>(null)
   const [editingLessonIdx, setEditingLessonIdx] = useState<number | null>(null)
   const [lessonDraft, setLessonDraft] = useState<{ category: string; text: string; attachments: AttachmentPayload[] } | null>(null)
   const [selectedDebugRecordId, setSelectedDebugRecordId] = useState<string | null>(null)
@@ -2204,9 +1976,6 @@ function App() {
   const [statusesDraft, setStatusesDraft] = useState(
     serializeStringLines(fallbackBootstrap.statuses),
   )
-  const [reminderCadencesDraft, setReminderCadencesDraft] = useState(
-    serializeReminderCadenceLines(fallbackBootstrap.reminderCadences),
-  )
   const [commentError, setCommentError] = useState<string | null>(null)
   const [commentMessage, setCommentMessage] = useState('')
   const [commentAttachments, setCommentAttachments] = useState<AttachmentPayload[]>([])
@@ -2241,10 +2010,6 @@ function App() {
     value,
     label: value,
   }))
-  const reminderOptions = bootstrapData.reminderCadences.map((value) => ({
-    value: value.label,
-    label: value.intervalDays > 0 ? `${value.label} (${value.intervalDays}d)` : value.label,
-  }))
   const completedStatusLabel =
     bootstrapData.statuses.find((status) => status.toLowerCase() === 'completed') ?? null
   const activeRefreshErrors = Object.entries(refreshErrors).filter(
@@ -2261,11 +2026,7 @@ function App() {
         value.length > 0 ? null : 'Select at least one project',
       startDate: (value) => (value ? null : 'Choose a start date'),
       endDate: (value, values) => {
-        if (!value) {
-          return 'Choose an end date'
-        }
-
-        if (values.startDate && dayjs(value).isBefore(dayjs(values.startDate), 'day')) {
+        if (value && values.startDate && dayjs(value).isBefore(dayjs(values.startDate), 'day')) {
           return 'End date cannot be earlier than the start date'
         }
 
@@ -2279,7 +2040,6 @@ function App() {
       impact: (value) => (value ? null : 'Set an impact level'),
       priority: (value) => (value ? null : 'Set a priority level'),
       status: (value) => (value ? null : 'Set a status'),
-      reminderCadence: (value) => (value ? null : 'Set a reminder cadence'),
       categories: (value) =>
         value.length > 0 ? null : 'Select at least one category',
       attachments: (value) =>
@@ -2312,7 +2072,7 @@ function App() {
       supplierRating: defaultSupplierRating(),
       outcome: [],
       occurrencePhase: '',
-      demerit: 0,
+      demerit: 'NA',
       linkedActivityIds: [],
       lessonsLearnt: [],
     },
@@ -2408,14 +2168,13 @@ function App() {
       owner: record.owner,
       projects: [...record.projects],
       startDate: dayjs(record.startDate).toDate(),
-      endDate: dayjs(record.endDate).toDate(),
+      endDate: record.endDate ? dayjs(record.endDate).toDate() : null,
       departments: [...record.departments],
       description: record.description,
       effort: record.effort,
       impact: record.impact,
       priority: record.priority,
       status: record.status,
-      reminderCadence: record.reminderCadence,
       categories: [...record.categories],
       attachments: [...record.attachments],
       labActivity: record.labActivity || 'None',
@@ -2443,14 +2202,13 @@ function App() {
       owner: record.owner,
       projects: [...record.projects],
       startDate: dayjs(record.startDate).toDate(),
-      endDate: dayjs(record.endDate).toDate(),
+      endDate: record.endDate ? dayjs(record.endDate).toDate() : null,
       departments: [...record.departments],
       description: record.description,
       effort: record.effort,
       impact: record.impact,
       priority: record.priority,
       status: record.status,
-      reminderCadence: record.reminderCadence,
       categories: [...record.categories],
       attachments: [],
       labActivity: record.labActivity || 'None',
@@ -2492,7 +2250,6 @@ function App() {
         impact: form.values.impact,
         priority: form.values.priority,
         status: form.values.status,
-        reminderCadence: form.values.reminderCadence,
         categories: [...form.values.categories],
       },
     }
@@ -2517,7 +2274,6 @@ function App() {
       impact: template.values.impact ?? form.values.impact,
       priority: template.values.priority ?? form.values.priority,
       status: template.values.status ?? form.values.status,
-      reminderCadence: template.values.reminderCadence ?? form.values.reminderCadence,
       categories: template.values.categories.length ? template.values.categories : form.values.categories,
     })
     setIsTemplatesModalOpen(false)
@@ -2533,7 +2289,7 @@ function App() {
   }
 
   function exportFilteredRecordsCsv() {
-    const headers = ['ID', 'Title', 'Owner', 'Projects', 'Departments', 'Categories', 'Start Date', 'End Date', 'Status', 'Priority', 'Effort', 'Impact', 'Reminder Cadence', 'Comments', 'Description', 'Submitted At']
+    const headers = ['ID', 'Title', 'Owner', 'Projects', 'Departments', 'Categories', 'Start Date', 'End Date', 'Status', 'Priority', 'Effort', 'Impact', 'Comments', 'Description', 'Submitted At']
     const rows = filteredRecords.map((r) => [
       formatRecordKey(r.id),
       r.title,
@@ -2547,7 +2303,6 @@ function App() {
       r.priority,
       r.effort,
       r.impact,
-      r.reminderCadence,
       String(r.comments.length),
       r.description.replace(/\r?\n/g, ' '),
       r.submittedAt,
@@ -2707,14 +2462,11 @@ function App() {
     : []
   const filteredRecordSignals = filteredRecords.map((record) => ({
     record,
-    signals: recordSignalState(record, bootstrapData.reminderCadences),
+    signals: recordSignalState(record),
   }))
   const overdueCount = filteredRecordSignals.filter((entry) => entry.signals.overdue).length
   const dueSoonCount = filteredRecordSignals.filter((entry) => entry.signals.dueSoon).length
   const staleCount = filteredRecordSignals.filter((entry) => entry.signals.stale).length
-  const reminderDueCount = filteredRecordSignals.filter(
-    (entry) => entry.signals.reminderDue,
-  ).length
   const boardColumns = bootstrapData.statuses
     .filter((status) => showCompletedColumn || status !== completedStatusLabel)
     .map((status) => ({
@@ -2881,6 +2633,24 @@ function App() {
       return groups
     }, new Map<string, typeof weeklyReportEntries>()),
   ).sort((left, right) => left[0].localeCompare(right[0]))
+  const weeklyRecordLabel = (record: ActivityRecord, leadingMeta: string[] = []) => {
+    const metadata = [
+      ...leadingMeta,
+      ...(weeklyShowRecordId ? [formatRecordKey(record.id)] : []),
+      ...(weeklyShowCategories ? record.categories : []),
+      ...(weeklyShowDepartments ? record.departments : []),
+    ].filter((value) => value.trim().length > 0)
+
+    return metadata.length > 0
+      ? `${record.title} (${metadata.join(' | ')})`
+      : record.title
+  }
+  const weeklyCommentLine = (comment: RecordComment) => {
+    const commentText = formatWeeklyCommentBullet(comment.message)
+    return weeklyShowCommentDates
+      ? `  - ${formatCommentDate(comment.createdAt)}: ${commentText}`
+      : `  - ${commentText}`
+  }
   const weeklyReportText = [
     weeklyTemplate === 'executive'
       ? `Executive weekly report for ${weeklyWindowLabel}`
@@ -2896,12 +2666,8 @@ function App() {
               weeklyExecutiveSummary,
               '',
               ...weeklyReportEntries.flatMap((entry) => [
-                `- ${entry.record.title} (${entry.record.status}, ${entry.record.owner})`,
-                ...entry.comments.map((comment) =>
-                  `  - ${formatCommentDate(comment.createdAt)}: ${formatWeeklyCommentBullet(
-                    comment.message,
-                  )}`,
-                ),
+                `- ${weeklyRecordLabel(entry.record, [entry.record.status, entry.record.owner])}`,
+                ...entry.comments.map(weeklyCommentLine),
                 '',
               ]),
             ]
@@ -2909,12 +2675,8 @@ function App() {
             ? weeklyGroupedByOwner.flatMap(([owner, entries]) => [
                 `${owner}`,
                 ...entries.flatMap((entry) => [
-                  `- ${entry.record.title} (${formatRecordKey(entry.record.id)})`,
-                  ...entry.comments.map((comment) =>
-                    `  - ${formatCommentDate(comment.createdAt)}: ${formatWeeklyCommentBullet(
-                      comment.message,
-                    )}`,
-                  ),
+                  `- ${weeklyRecordLabel(entry.record)}`,
+                  ...entry.comments.map(weeklyCommentLine),
                   '',
                 ]),
               ])
@@ -2922,22 +2684,14 @@ function App() {
               ? weeklyGroupedByProject.flatMap(([project, entries]) => [
                   `${project}`,
                   ...entries.flatMap((entry) => [
-                    `- ${entry.record.title} (${formatRecordKey(entry.record.id)})`,
-                    ...entry.comments.map((comment) =>
-                      `  - ${formatCommentDate(comment.createdAt)}: ${formatWeeklyCommentBullet(
-                        comment.message,
-                      )}`,
-                    ),
+                    `- ${weeklyRecordLabel(entry.record)}`,
+                    ...entry.comments.map(weeklyCommentLine),
                     '',
                   ]),
                 ])
               : weeklyReportEntries.flatMap((entry) => [
-                  `- ${entry.record.title} (${formatRecordKey(entry.record.id)})`,
-                  ...entry.comments.map((comment) =>
-                    `  - ${formatCommentDate(comment.createdAt)}: ${formatWeeklyCommentBullet(
-                      comment.message,
-                    )}`,
-                  ),
+                  `- ${weeklyRecordLabel(entry.record)}`,
+                  ...entry.comments.map(weeklyCommentLine),
                   '',
                 ])),
   ]
@@ -3095,9 +2849,6 @@ function App() {
     setEffortsDraft(serializeStringLines(nextBootstrap.efforts))
     setImpactsDraft(serializeStringLines(nextBootstrap.impacts))
     setStatusesDraft(serializeStringLines(nextBootstrap.statuses))
-    setReminderCadencesDraft(
-      serializeReminderCadenceLines(nextBootstrap.reminderCadences),
-    )
     setSettingsError(null)
 
     setSharedFilters((current) => normalizeFilters(current, nextSettings))
@@ -3105,12 +2856,6 @@ function App() {
     setQuickStatus(
       (current) =>
         normalizeSingleValue(current, nextBootstrap.statuses) as ActivityStatus | null,
-    )
-    setQuickReminderCadence((current) =>
-      normalizeSingleValue(
-        current,
-        nextBootstrap.reminderCadences.map((entry) => entry.label),
-      ),
     )
 
     form.setValues({
@@ -3122,10 +2867,6 @@ function App() {
       impact: normalizeSingleValue(form.values.impact, nextBootstrap.impacts),
       priority: normalizeSingleValue(form.values.priority, nextBootstrap.priorities),
       status: normalizeSingleValue(form.values.status, nextBootstrap.statuses),
-      reminderCadence: normalizeSingleValue(
-        form.values.reminderCadence,
-        nextBootstrap.reminderCadences.map((entry) => entry.label),
-      ),
       categories: normalizeListValue(form.values.categories, nextBootstrap.categories),
     })
   })
@@ -3137,7 +2878,6 @@ function App() {
   useEffect(() => {
     setQuickOwner(selectedRecord?.owner ?? null)
     setQuickStatus(selectedRecord?.status ?? null)
-    setQuickReminderCadence(selectedRecord?.reminderCadence ?? null)
   }, [selectedRecord])
 
   useEffect(() => {
@@ -3155,6 +2895,10 @@ function App() {
     weeklyReportYear,
     weeklyRangeStart,
     weeklyRangeEnd,
+    weeklyShowCommentDates,
+    weeklyShowRecordId,
+    weeklyShowCategories,
+    weeklyShowDepartments,
     sharedFilters,
   ])
 
@@ -3257,49 +3001,6 @@ function App() {
     }
   }, [])
 
-  useEffect(() => {
-    if (isBootstrapping || records.length === 0) return
-
-    async function checkAndNotify() {
-      const dueRecords = records.filter((record) => {
-        const signals = recordSignalState(record, bootstrapData.reminderCadences)
-        return signals.reminderDue && !notifiedRecordIds.current.has(record.id)
-      })
-      if (dueRecords.length === 0) return
-
-      try {
-        let granted = await isPermissionGranted()
-        if (!granted) {
-          const result = await requestPermission()
-          granted = result === 'granted'
-        }
-        if (!granted) return
-
-        const toNotify = dueRecords.slice(0, 3)
-        for (const record of toNotify) {
-          sendNotification({
-            title: 'Tracker reminder',
-            body: `${record.title} is due for review (${record.reminderCadence})`,
-          })
-          notifiedRecordIds.current.add(record.id)
-        }
-        if (dueRecords.length > 3) {
-          sendNotification({
-            title: 'Tracker',
-            body: `${dueRecords.length - 3} more record${dueRecords.length - 3 === 1 ? '' : 's'} are due for review`,
-          })
-          dueRecords.slice(3).forEach((r) => notifiedRecordIds.current.add(r.id))
-        }
-      } catch {
-        // notifications not available in this environment
-      }
-    }
-
-    void checkAndNotify()
-    const interval = setInterval(() => void checkAndNotify(), 5 * 60 * 1000)
-    return () => clearInterval(interval)
-  }, [records, bootstrapData.reminderCadences, isBootstrapping])
-
   async function refreshStats(options?: { silent?: boolean; filters?: StatsFilters }) {
     const silent = options?.silent ?? false
     const filters = options?.filters ?? sharedFilters
@@ -3400,7 +3101,7 @@ function App() {
         supplierRating: values.supplierRating,
         outcome: values.outcome,
         occurrencePhase: values.occurrencePhase,
-        demerit: values.demerit,
+        demerit: normalizeDemeritValue(values.demerit),
         linkedActivityIds: values.linkedActivityIds,
         lessonsLearnt: values.lessonsLearnt,
         expectedLastModifiedAt: editingDebugRecordId
@@ -3460,7 +3161,7 @@ function App() {
       supplierRating: mergeSupplierRating(record.supplierRating ?? []),
       outcome: record.outcome,
       occurrencePhase: record.occurrencePhase ?? '',
-      demerit: record.demerit ?? 0,
+      demerit: normalizeDemeritValue(record.demerit),
       linkedActivityIds: record.linkedActivityIds ?? [],
       lessonsLearnt: record.lessonsLearnt ?? [],
     })
@@ -3733,7 +3434,6 @@ function App() {
         impact: values.impact ?? '',
         priority: values.priority ?? '',
         status: values.status ?? 'Open',
-        reminderCadence: values.reminderCadence ?? 'None',
         categories: values.categories,
         attachments: values.attachments,
         labActivity: values.labActivity,
@@ -4079,9 +3779,8 @@ function App() {
       {
         owner: quickOwner,
         status: quickStatus,
-        reminderCadence: quickReminderCadence,
       },
-      'Record owner, status, or reminder settings updated successfully.',
+      'Record owner or status updated successfully.',
     )
   }
 
@@ -4198,18 +3897,6 @@ function App() {
   }
 
   function buildSettingsPayload() {
-    const reminderCadences = parseReminderCadenceLines(reminderCadencesDraft)
-    const invalidReminderCadence = reminderCadences.find(
-      (entry) => entry.label.trim().length === 0 || Number.isNaN(entry.intervalDays),
-    )
-
-    if (invalidReminderCadence) {
-      setSettingsError(
-        'Reminder cadences must use the format "Label | days", for example "Weekly | 7".',
-      )
-      return null
-    }
-
     const categories = uniqueTrimmedLines(categoriesDraft)
 
     return {
@@ -4225,7 +3912,7 @@ function App() {
       efforts: uniqueTrimmedLines(effortsDraft),
       impacts: uniqueTrimmedLines(impactsDraft),
       statuses: uniqueTrimmedLines(statusesDraft),
-      reminderCadences,
+      reminderCadences: bootstrapData.reminderCadences,
     }
   }
 
@@ -4239,7 +3926,6 @@ function App() {
       ['efforts', new Set(uniqueTrimmedLines(effortsDraft))],
       ['impacts', new Set(uniqueTrimmedLines(impactsDraft))],
       ['statuses', new Set(uniqueTrimmedLines(statusesDraft))],
-      ['reminderCadences', new Set(uniqueTrimmedLines(reminderCadencesDraft))],
     ])
 
     for (const conflict of settingsConflicts) {
@@ -4258,9 +3944,6 @@ function App() {
     setEffortsDraft(Array.from(draftLinesByField.get('efforts') ?? []).join('\n'))
     setImpactsDraft(Array.from(draftLinesByField.get('impacts') ?? []).join('\n'))
     setStatusesDraft(Array.from(draftLinesByField.get('statuses') ?? []).join('\n'))
-    setReminderCadencesDraft(
-      Array.from(draftLinesByField.get('reminderCadences') ?? []).join('\n'),
-    )
     setPendingSettingsPayload(null)
     setSettingsConflicts([])
     setSettingsConflictError(null)
@@ -4379,6 +4062,27 @@ function App() {
     return false
   }
 
+  function openAdminPasswordModal(page: PageKey) {
+    setPendingAdminPage(page)
+    setAdminPasswordInput('')
+    setAdminPasswordError(null)
+  }
+
+  function handleSubmitAdminPassword() {
+    if (adminPasswordInput === ADMIN_PASSWORD) {
+      setIsAdminUnlocked(true)
+      if (pendingAdminPage) {
+        setCurrentPage(pendingAdminPage)
+      }
+      setPendingAdminPage(null)
+      setAdminPasswordInput('')
+      setAdminPasswordError(null)
+      return
+    }
+
+    setAdminPasswordError('Incorrect password.')
+  }
+
   function navigateToPage(page: PageKey) {
     if (currentPage === 'admin' && hasActivityAdminUnsavedChanges()) {
       setPendingNavPage(page)
@@ -4388,6 +4092,10 @@ function App() {
     if (currentPage === 'debug-admin' && hasDebugAdminUnsavedChanges()) {
       setPendingNavPage(page)
       setShowUnsavedNavModal(true)
+      return
+    }
+    if (isAdminPage(page) && !isAdminUnlocked) {
+      openAdminPasswordModal(page)
       return
     }
     setCurrentPage(page)
@@ -4423,7 +4131,6 @@ function App() {
       'owner',
       'status',
       'priority',
-      'reminderCadence',
       'startDate',
       'endDate',
       'projects',
@@ -4440,7 +4147,6 @@ function App() {
         record.owner,
         record.status,
         record.priority,
-        record.reminderCadence,
         record.startDate,
         record.endDate,
         record.projects.join(' | '),
@@ -4685,7 +4391,6 @@ function App() {
     impact: form.values.impact,
     priority: form.values.priority,
     status: form.values.status,
-    reminderCadence: form.values.reminderCadence,
     categories: form.values.categories,
     attachments: form.values.attachments.map((attachment) => ({
       fileName: attachment.fileName,
@@ -4896,6 +4601,61 @@ function App() {
         </Stack>
       </Modal>
 
+      <Modal
+        opened={pendingAdminPage !== null}
+        onClose={() => {
+          setPendingAdminPage(null)
+          setAdminPasswordInput('')
+          setAdminPasswordError(null)
+        }}
+        title="Admin access"
+        centered
+        size="sm"
+      >
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            handleSubmitAdminPassword()
+          }}
+        >
+          <Stack gap="md">
+            <Text size="sm" c="dimmed">
+              Enter the administrator password to open this page.
+            </Text>
+            <TextInput
+              label="Password"
+              type="password"
+              value={adminPasswordInput}
+              error={adminPasswordError}
+              autoFocus
+              onChange={(event) => {
+                setAdminPasswordInput(event.currentTarget.value)
+                if (adminPasswordError) {
+                  setAdminPasswordError(null)
+                }
+              }}
+            />
+            <Group justify="flex-end" gap="sm">
+              <Button
+                type="button"
+                variant="default"
+                radius="xl"
+                onClick={() => {
+                  setPendingAdminPage(null)
+                  setAdminPasswordInput('')
+                  setAdminPasswordError(null)
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" radius="xl" disabled={!adminPasswordInput}>
+                Unlock
+              </Button>
+            </Group>
+          </Stack>
+        </form>
+      </Modal>
+
       <div
         className={`workspace-grid ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
       >
@@ -4907,14 +4667,20 @@ function App() {
           <Stack gap="xl" className="sidebar-stack">
             <div className="sidebar-topbar">
               {!isSidebarCollapsed ? (
-                <div>
-                  <Text className="eyebrow">{activeModule === 'activity' ? 'Activity Tracker' : 'Key Debug'}</Text>
-                  <Title order={1} className="hero-title">
-                    {activeModule === 'activity' ? 'Shared issue tracking for team operations.' : 'Significant debug result repository.'}
-                  </Title>
+                <div className="sidebar-brand">
+                  <div className="brand-copy">
+                    <Text className="eyebrow">{activeModule === 'activity' ? TRACKER_NAME : 'Key Debug'}</Text>
+                    {activeModule === 'debug' ? (
+                      <Title order={1} className="hero-title">
+                        Significant debug result repository.
+                      </Title>
+                    ) : null}
+                  </div>
                 </div>
               ) : (
-                <Text className="eyebrow">{activeModule === 'activity' ? 'ACT' : 'DBG'}</Text>
+                <div className="sidebar-brand compact">
+                  <Text className="eyebrow">{activeModule === 'activity' ? TRACKER_SHORT_NAME : 'DBG'}</Text>
+                </div>
               )}
 
               <button
@@ -4931,6 +4697,8 @@ function App() {
               <button
                 type="button"
                 className={`module-tab ${activeModule === 'activity' ? 'active' : ''}`}
+                aria-label="Tracker"
+                title="Tracker"
                 onClick={() => { navigateToPage('overview'); setActiveModule('activity') }}
               >
                 <IconTargetArrow size={14} />
@@ -4939,6 +4707,8 @@ function App() {
               <button
                 type="button"
                 className={`module-tab ${activeModule === 'debug' ? 'active' : ''}`}
+                aria-label="Key Debug"
+                title="Key Debug"
                 onClick={() => { navigateToPage('debug-list'); setActiveModule('debug') }}
               >
                 <IconBug size={14} />
@@ -4965,7 +4735,7 @@ function App() {
                 </button>
               </Tooltip>
 
-              <Tooltip label="Tracker Form — Capture new work" position="right" disabled={!isSidebarCollapsed}>
+              <Tooltip label={`${TRACKER_NAME} Form — Capture new work`} position="right" disabled={!isSidebarCollapsed}>
                 <button
                   type="button"
                   className={`page-link ${currentPage === 'form' ? 'active' : ''}`}
@@ -4975,7 +4745,7 @@ function App() {
                     <IconClipboardText size={18} />
                   </span>
                   <span>
-                    <strong>Tracker Form</strong>
+                    <strong>{TRACKER_NAME} Form</strong>
                     <small>Capture new work</small>
                   </span>
                   <span className="page-link-shortcut">2</span>
@@ -4990,7 +4760,7 @@ function App() {
                 >
                   <span className="page-link-icon" style={{ position: 'relative' }}>
                     <IconListDetails size={18} />
-                    {overdueCount + staleCount + reminderDueCount > 0 ? (
+                    {overdueCount + staleCount > 0 ? (
                       <span className="nav-signal-dot" />
                     ) : null}
                   </span>
@@ -4998,9 +4768,9 @@ function App() {
                     <strong>Records</strong>
                     <small>Browse saved work</small>
                   </span>
-                  {overdueCount + staleCount + reminderDueCount > 0 && !isSidebarCollapsed ? (
+                  {overdueCount + staleCount > 0 && !isSidebarCollapsed ? (
                     <Badge size="xs" variant="filled" color="red" radius="xl" className="page-link-shortcut">
-                      {overdueCount + staleCount + reminderDueCount}
+                      {overdueCount + staleCount}
                     </Badge>
                   ) : (
                     <span className="page-link-shortcut">3</span>
@@ -5063,7 +4833,7 @@ function App() {
                 <button
                   type="button"
                   className={`page-link ${currentPage === 'admin' ? 'active' : ''}`}
-                  onClick={() => setCurrentPage('admin')}
+                  onClick={() => navigateToPage('admin')}
                 >
                   <span className="page-link-icon">
                     <IconFolders size={18} />
@@ -5123,7 +4893,7 @@ function App() {
                 <button
                   type="button"
                   className={`page-link ${currentPage === 'debug-admin' ? 'active' : ''}`}
-                  onClick={() => setCurrentPage('debug-admin')}
+                  onClick={() => navigateToPage('debug-admin')}
                 >
                   <span className="page-link-icon"><IconFolders size={18} /></span>
                   <span><strong>Admin</strong><small>Debug settings</small></span>
@@ -5139,7 +4909,7 @@ function App() {
                   variant="light"
                   radius="lg"
                   icon={statusIcon}
-                  title="Tracker status"
+                  title={`${TRACKER_NAME} status`}
                   className="status-card"
                 >
                   {isBootstrapping ? 'Preparing the application...' : statusMessage}
@@ -5433,7 +5203,11 @@ function App() {
                 onClick={() => {
                   setShowUnsavedNavModal(false)
                   if (pendingNavPage) {
-                    setCurrentPage(pendingNavPage)
+                    if (isAdminPage(pendingNavPage) && !isAdminUnlocked) {
+                      openAdminPasswordModal(pendingNavPage)
+                    } else {
+                      setCurrentPage(pendingNavPage)
+                    }
                     setPendingNavPage(null)
                   }
                 }}
@@ -5681,7 +5455,7 @@ function App() {
                 </Group>
               </div>
 
-              <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Text className="metric-label">Latest submission</Text>
                   <Text className="insight-value">
@@ -5716,10 +5490,6 @@ function App() {
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Text className="metric-label">Stale</Text>
                   <Text className="insight-value">{staleCount}</Text>
-                </Card>
-                <Card radius="xl" padding="lg" className="surface-card">
-                  <Text className="metric-label">Reminder Due</Text>
-                  <Text className="insight-value">{reminderDueCount}</Text>
                 </Card>
               </SimpleGrid>
 
@@ -5940,7 +5710,7 @@ function App() {
                   <div>
                     <Text className="eyebrow">Create / Edit</Text>
                     <Title order={2} className="form-title">
-                      {editingRecordId ? 'Edit record' : 'Tracker form'}
+                      {editingRecordId ? 'Edit record' : `${TRACKER_NAME} form`}
                     </Title>
                     <Text className="form-copy">
                       {editingRecordId
@@ -6064,10 +5834,9 @@ function App() {
 
                   <DateInput
                     label="End date"
-                    placeholder="Pick end date"
+                    placeholder="Leave empty while open"
                     valueFormat="DD MMM YYYY"
                     clearable
-                    required
                     {...form.getInputProps('endDate')}
                   />
                 </div>
@@ -6129,14 +5898,6 @@ function App() {
                     data={trackerStatusOptions}
                     required
                     {...form.getInputProps('status')}
-                  />
-
-                  <Select
-                    label="Reminder cadence"
-                    placeholder="Select reminder cadence"
-                    data={reminderOptions}
-                    required
-                    {...form.getInputProps('reminderCadence')}
                   />
                 </div>
 
@@ -6423,10 +6184,7 @@ function App() {
                                     {formatRecordKey(record.id)}
                                   </Text>
                                   <Group gap="xs">
-                                    {signalBadges(
-                                      record,
-                                      bootstrapData.reminderCadences,
-                                    ).map((badge) => (
+                                    {signalBadges(record).map((badge) => (
                                       <Badge
                                         key={`${record.id}-${badge.label}`}
                                         variant="light"
@@ -6452,7 +6210,6 @@ function App() {
                                 <div className="record-row-meta">
                                   <span>{record.owner}</span>
                                   <span>{formatDateRange(record.startDate, record.endDate)}</span>
-                                  <span>{record.reminderCadence} reminder</span>
                                   <span>
                                     {record.comments.length} comment
                                     {record.comments.length === 1 ? '' : 's'}
@@ -6542,9 +6299,6 @@ function App() {
                           <span className="record-chip">{selectedRecord.owner}</span>
                           <span className="record-chip">{selectedRecord.status}</span>
                           <span className="record-chip">
-                            {selectedRecord.reminderCadence} reminder
-                          </span>
-                          <span className="record-chip">
                             {selectedRecord.effort} effort
                           </span>
                           <span className="record-chip">
@@ -6554,10 +6308,7 @@ function App() {
                             {selectedRecord.projects.length} project
                             {selectedRecord.projects.length === 1 ? '' : 's'}
                           </span>
-                          {signalBadges(
-                            selectedRecord,
-                            bootstrapData.reminderCadences,
-                          ).map((badge) => (
+                          {signalBadges(selectedRecord).map((badge) => (
                             <span className="record-chip record-chip-signal" key={badge.label}>
                               {badge.label}
                             </span>
@@ -6580,7 +6331,7 @@ function App() {
                             <div>
                               <Text fw={700}>Quick updates</Text>
                               <Text size="sm" c="dimmed">
-                                Reassign the owner, move status, or change reminder cadence without opening full edit mode.
+                                Reassign the owner or move status without opening full edit mode.
                               </Text>
                             </div>
                             <Badge variant="light" color="blue">
@@ -6588,7 +6339,7 @@ function App() {
                             </Badge>
                           </Group>
 
-                          <div className="grid-3">
+                          <div className="grid-2">
                             <Select
                               label="Owner"
                               data={bootstrapData.owners}
@@ -6602,31 +6353,11 @@ function App() {
                               value={quickStatus}
                               onChange={(value) => setQuickStatus(value as ActivityStatus | null)}
                             />
-                            <Select
-                              label="Reminder cadence"
-                              data={reminderOptions}
-                              value={quickReminderCadence}
-                              onChange={(value) =>
-                                setQuickReminderCadence(value as ReminderCadence | null)
-                              }
-                            />
                           </div>
 
                           <div className="comment-actions">
                             <Text className="submit-note">
                               Last activity {formatTimestamp(selectedRecord.lastModifiedAt || selectedRecord.submittedAt)}
-                              {' · '}
-                              Reminder due {recordSignalState(
-                                selectedRecord,
-                                bootstrapData.reminderCadences,
-                              ).reminderDate
-                                ? formatShortDate(
-                                    recordSignalState(
-                                      selectedRecord,
-                                      bootstrapData.reminderCadences,
-                                    ).reminderDate?.toISOString() ?? null,
-                                  )
-                                : 'Not scheduled'}
                             </Text>
                             <Button
                               type="button"
@@ -6945,7 +6676,7 @@ function App() {
                                 <div className="comment-item" key={comment.id}>
                                   <div className="comment-header">
                                     <Text size="sm" c="dimmed">
-                                      {formatTimestamp(comment.createdAt)}
+                                      {formatCommentAuthor(comment.author)} · {formatTimestamp(comment.createdAt)}
                                     </Text>
                                     <Group gap="xs">
                                       {editingCommentId === comment.id ? (
@@ -7353,10 +7084,7 @@ function App() {
                                 {record.owner}{record.projects.length > 0 ? ` · ${record.projects.slice(0, 1).join(', ')}` : ''}
                               </Text>
                               <div className="board-card-badges">
-                                {signalBadges(
-                                  record,
-                                  bootstrapData.reminderCadences,
-                                ).map((badge) => (
+                                {signalBadges(record).map((badge) => (
                                   <Badge
                                     variant="light"
                                     color={badge.color}
@@ -7605,6 +7333,50 @@ function App() {
                     }
                   />
 
+                  <div className="form-section-label">
+                    <Text
+                      size="xs"
+                      fw={700}
+                      c="dimmed"
+                      tt="uppercase"
+                      className="form-section-eyebrow"
+                    >
+                      Report details
+                    </Text>
+                    <Divider />
+                  </div>
+
+                  <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                    <Checkbox
+                      label="Show comment dates"
+                      checked={weeklyShowCommentDates}
+                      onChange={(event) =>
+                        setWeeklyShowCommentDates(event.currentTarget.checked)
+                      }
+                    />
+                    <Checkbox
+                      label="Show tracker ID"
+                      checked={weeklyShowRecordId}
+                      onChange={(event) =>
+                        setWeeklyShowRecordId(event.currentTarget.checked)
+                      }
+                    />
+                    <Checkbox
+                      label="Show categories"
+                      checked={weeklyShowCategories}
+                      onChange={(event) =>
+                        setWeeklyShowCategories(event.currentTarget.checked)
+                      }
+                    />
+                    <Checkbox
+                      label="Show departments"
+                      checked={weeklyShowDepartments}
+                      onChange={(event) =>
+                        setWeeklyShowDepartments(event.currentTarget.checked)
+                      }
+                    />
+                  </SimpleGrid>
+
                   {weeklyReportMode === 'week' ? (
                     <>
                       <Group grow align="flex-end">
@@ -7793,26 +7565,15 @@ function App() {
                         radius="md"
                         clearable
                       />
-                      <div>
-                        <InputLabel mb={6}>Demerit</InputLabel>
-                        <Group gap="md" align="center">
-                          <Slider
-                            style={{ flex: 1 }}
-                            min={0}
-                            max={100}
-                            step={10}
-                            marks={[
-                              { value: 0, label: '0' },
-                              { value: 50, label: '50' },
-                              { value: 100, label: '100' },
-                            ]}
-                            {...debugForm.getInputProps('demerit')}
-                          />
-                          <Text size="sm" fw={600} w={32} ta="right">
-                            {debugForm.values.demerit}
-                          </Text>
-                        </Group>
-                      </div>
+                      <Select
+                        label="Demerit"
+                        placeholder="Select demerit"
+                        data={DEMERIT_OPTIONS}
+                        value={debugForm.values.demerit}
+                        onChange={(value) => debugForm.setFieldValue('demerit', normalizeDemeritValue(value))}
+                        radius="md"
+                        allowDeselect={false}
+                      />
                       <div>
                         <InputLabel mb={6}>Supplier capability rating</InputLabel>
                         <Stack gap={8}>
@@ -8394,10 +8155,10 @@ function App() {
                                     <Badge size="xs" variant="light" color="violet" radius="xl">{record.occurrencePhase}</Badge>
                                   </Group>
                                 ) : null}
-                                {(record.demerit ?? 0) > 0 ? (
+                                {normalizeDemeritValue(record.demerit) !== 'NA' ? (
                                   <Group gap="xs">
                                     <Text size="xs" c="dimmed">Demerit:</Text>
-                                    <Badge size="xs" variant="filled" color={(record.demerit ?? 0) >= 70 ? 'red' : (record.demerit ?? 0) >= 40 ? 'orange' : 'yellow'} radius="xl">{record.demerit}</Badge>
+                                    <Badge size="xs" variant="filled" color={demeritBadgeColor(normalizeDemeritValue(record.demerit))} radius="xl">{normalizeDemeritValue(record.demerit)}</Badge>
                                   </Group>
                                 ) : null}
                                 {(record.linkedActivityIds ?? []).length > 0 ? (
@@ -8606,7 +8367,7 @@ function App() {
                   </Title>
                   <Text className="form-copy">
                     Manage Key Debug–specific values: categories and outcome options.
-                    Projects and departments are shared with the Activity Tracker and are
+                    Projects and departments are shared with {TRACKER_NAME} and are
                     editable from its admin page.
                   </Text>
                 </div>
@@ -8669,7 +8430,7 @@ function App() {
                   </Title>
                   <Text className="form-copy">
                     Manage the tracker values that power owners, projects, workflow
-                    statuses, priorities, and reminder cadence options. Changes are
+                    statuses, and priorities. Changes are
                     saved into the shared database itself.
                   </Text>
                 </div>
@@ -8694,9 +8455,6 @@ function App() {
                       setEffortsDraft(serializeStringLines(bootstrapData.efforts))
                       setImpactsDraft(serializeStringLines(bootstrapData.impacts))
                       setStatusesDraft(serializeStringLines(bootstrapData.statuses))
-                      setReminderCadencesDraft(
-                        serializeReminderCadenceLines(bootstrapData.reminderCadences),
-                      )
                       setSettingsError(null)
                       setSettingsConflictError(null)
                       setSettingsConflicts([])
@@ -8791,11 +8549,6 @@ function App() {
                   onChange={setImpactsDraft}
                 />
               </SimpleGrid>
-
-              <AdminReminderCadenceEditor
-                value={reminderCadencesDraft}
-                onChange={setReminderCadencesDraft}
-              />
             </Stack>
           )}
         </Paper>

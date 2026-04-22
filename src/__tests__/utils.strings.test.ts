@@ -3,8 +3,6 @@ import {
   escapeCsvCell,
   uniqueTrimmedLines,
   serializeStringLines,
-  serializeReminderCadenceLines,
-  parseReminderCadenceLines,
   extractMentions,
   isConcurrencyConflictMessage,
 } from '../utils'
@@ -73,57 +71,6 @@ describe('serializeStringLines', () => {
 
   it('handles single item', () => {
     expect(serializeStringLines(['only'])).toBe('only')
-  })
-})
-
-// ── serializeReminderCadenceLines ─────────────────────────────────────────────
-describe('serializeReminderCadenceLines', () => {
-  it('formats entries as "Label | Days"', () => {
-    const options = [
-      { label: 'Weekly', intervalDays: 7 },
-      { label: 'Monthly', intervalDays: 30 },
-    ]
-    expect(serializeReminderCadenceLines(options)).toBe('Weekly | 7\nMonthly | 30')
-  })
-
-  it('handles empty array', () => {
-    expect(serializeReminderCadenceLines([])).toBe('')
-  })
-
-  it('handles None cadence with 0 days', () => {
-    expect(serializeReminderCadenceLines([{ label: 'None', intervalDays: 0 }])).toBe('None | 0')
-  })
-})
-
-// ── parseReminderCadenceLines ─────────────────────────────────────────────────
-describe('parseReminderCadenceLines', () => {
-  it('parses valid "Label | Days" lines', () => {
-    const result = parseReminderCadenceLines('Weekly | 7\nMonthly | 30')
-    expect(result).toEqual([
-      { label: 'Weekly', intervalDays: 7 },
-      { label: 'Monthly', intervalDays: 30 },
-    ])
-  })
-
-  it('returns NaN intervalDays for unparseable days', () => {
-    const result = parseReminderCadenceLines('Bad | abc')
-    expect(result[0].intervalDays).toBeNaN()
-  })
-
-  it('ignores blank lines', () => {
-    const result = parseReminderCadenceLines('Weekly | 7\n\nMonthly | 30')
-    expect(result).toHaveLength(2)
-  })
-
-  it('round-trips through serialize/parse', () => {
-    const original = [
-      { label: 'None', intervalDays: 0 },
-      { label: 'Weekly', intervalDays: 7 },
-      { label: 'Biweekly', intervalDays: 14 },
-    ]
-    const serialized = serializeReminderCadenceLines(original)
-    const parsed = parseReminderCadenceLines(serialized)
-    expect(parsed).toEqual(original)
   })
 })
 

@@ -92,6 +92,7 @@ export interface RecordHistoryEntry {
 export interface RecordComment {
   id: string
   createdAt: string
+  author?: string
   message: string
   attachments: AttachmentPayload[]
 }
@@ -131,7 +132,6 @@ export interface ActivityPayload {
   impact: string
   priority: string
   status: ActivityStatus
-  reminderCadence: ReminderCadence
   categories: string[]
   attachments: AttachmentPayload[]
   labActivity: string
@@ -183,7 +183,6 @@ export interface AttachmentStorageStats {
 export interface QuickUpdatePayload {
   owner?: string | null
   status?: ActivityStatus | null
-  reminderCadence?: ReminderCadence | null
   expectedLastModifiedAt?: string | null
 }
 
@@ -213,7 +212,7 @@ export interface DebugRecord {
   outcome: string[]
   lastModifiedAt: string
   occurrencePhase: string
-  demerit: number
+  demerit: string
   linkedActivityIds: string[]
   lessonsLearnt: LessonLearnt[]
 }
@@ -231,7 +230,7 @@ export interface DebugPayload {
   supplierRating: SupplierRatingEntry[]
   outcome: string[]
   occurrencePhase: string
-  demerit: number
+  demerit: string
   linkedActivityIds: string[]
   lessonsLearnt: LessonLearnt[]
   expectedLastModifiedAt?: string | null
@@ -250,7 +249,7 @@ export interface DebugFormValues {
   supplierRating: SupplierRatingEntry[]
   outcome: string[]
   occurrencePhase: string
-  demerit: number
+  demerit: string
   linkedActivityIds: string[]
   lessonsLearnt: LessonLearnt[]
 }
@@ -267,7 +266,6 @@ export interface ActivityFormValues {
   impact: string | null
   priority: string | null
   status: ActivityStatus | null
-  reminderCadence: ReminderCadence | null
   categories: string[]
   attachments: AttachmentPayload[]
   labActivity: string

@@ -13,7 +13,6 @@ import {
   normalizeListValue,
   normalizeFilters,
   activityStatusColor,
-  reminderIntervalDays,
   recordSignalState,
   signalBadges,
   normalizeCategoryImpactFactors,
@@ -62,13 +61,6 @@ const emptyFilters: StatsFilters = {
   impacts: [],
 }
 
-const cadences = [
-  { label: 'None', intervalDays: 0 },
-  { label: 'Weekly', intervalDays: 7 },
-  { label: 'Biweekly', intervalDays: 14 },
-  { label: 'Monthly', intervalDays: 30 },
-]
-
 // ── durationDays ──────────────────────────────────────────────────────────────
 describe('durationDays', () => {
   it('counts inclusive days (start to end)', () => {
@@ -84,6 +76,14 @@ describe('durationDays', () => {
   it('returns 1 (not negative) for inverted dates', () => {
     const record = makeRecord({ startDate: '2024-01-10', endDate: '2024-01-01' })
     expect(durationDays(record)).toBe(1)
+  })
+
+  it('counts open records through today when end date is empty', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2024-01-15T12:00:00Z'))
+    const record = makeRecord({ startDate: '2024-01-10', endDate: '' })
+    expect(durationDays(record)).toBe(6)
+    vi.useRealTimers()
   })
 })
 
@@ -400,22 +400,6 @@ describe('activityStatusColor', () => {
   })
 })
 
-// ── reminderIntervalDays ──────────────────────────────────────────────────────
-describe('reminderIntervalDays', () => {
-  it('returns the interval for a matching cadence', () => {
-    expect(reminderIntervalDays('Weekly', cadences)).toBe(7)
-    expect(reminderIntervalDays('Monthly', cadences)).toBe(30)
-  })
-
-  it('returns null for "None" cadence (intervalDays = 0)', () => {
-    expect(reminderIntervalDays('None', cadences)).toBeNull()
-  })
-
-  it('returns null for unknown cadence', () => {
-    expect(reminderIntervalDays('Quarterly', cadences)).toBeNull()
-  })
-})
-
 // ── normalizeCategoryImpactFactors ────────────────────────────────────────────
 describe('normalizeCategoryImpactFactors', () => {
   it('preserves valid factors', () => {
@@ -506,13 +490,13 @@ describe('recordSignalState', () => {
       status: 'Open',
       lastModifiedAt: '2024-06-14T00:00:00Z',
     })
-    const state = recordSignalState(record, cadences)
+    const state = recordSignalState(record)
     expect(state.overdue).toBe(true)
   })
 
   it('does not mark completed records as overdue', () => {
     const record = makeRecord({ endDate: '2024-06-10', status: 'Completed' })
-    const state = recordSignalState(record, cadences)
+    const state = recordSignalState(record)
     expect(state.overdue).toBe(false)
   })
 
@@ -523,20 +507,8 @@ describe('recordSignalState', () => {
       lastModifiedAt: '2024-05-01T00:00:00Z',
       submittedAt: '2024-05-01T00:00:00Z',
     })
-    const state = recordSignalState(record, cadences)
+    const state = recordSignalState(record)
     expect(state.stale).toBe(true)
-  })
-
-  it('marks reminder due when cadence interval has elapsed', () => {
-    const record = makeRecord({
-      status: 'Open',
-      endDate: '2024-12-31',
-      reminderCadence: 'Weekly',
-      lastModifiedAt: '2024-06-01T00:00:00Z',
-      submittedAt: '2024-06-01T00:00:00Z',
-    })
-    const state = recordSignalState(record, cadences)
-    expect(state.reminderDue).toBe(true)
   })
 
   it('marks dueSoon when end date is within 7 days', () => {
@@ -545,9 +517,20 @@ describe('recordSignalState', () => {
       endDate: '2024-06-20',
       lastModifiedAt: '2024-06-15T00:00:00Z',
     })
-    const state = recordSignalState(record, cadences)
+    const state = recordSignalState(record)
     expect(state.dueSoon).toBe(true)
     expect(state.overdue).toBe(false)
+  })
+
+  it('does not mark open-ended records as overdue or due soon', () => {
+    const record = makeRecord({
+      status: 'Open',
+      endDate: '',
+      lastModifiedAt: '2024-06-15T00:00:00Z',
+    })
+    const state = recordSignalState(record)
+    expect(state.overdue).toBe(false)
+    expect(state.dueSoon).toBe(false)
   })
 })
 
@@ -566,12 +549,12 @@ describe('signalBadges', () => {
       reminderCadence: 'None',
       lastModifiedAt: '2024-06-15T00:00:00Z',
     })
-    expect(signalBadges(record, cadences)).toEqual([])
+    expect(signalBadges(record)).toEqual([])
   })
 
   it('includes Overdue badge for past-due open record', () => {
     const record = makeRecord({ endDate: '2024-06-01', status: 'Open' })
-    const badges = signalBadges(record, cadences)
+    const badges = signalBadges(record)
     expect(badges.some((b) => b.label === 'Overdue')).toBe(true)
   })
 })

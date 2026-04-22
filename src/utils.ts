@@ -6,8 +6,6 @@ import type {
   BootstrapPayload,
   DatabaseDocument,
   RecordComment,
-  ReminderCadence,
-  ReminderCadenceOption,
   StatsFilters,
   TrackerSettings,
 } from './types'
@@ -37,7 +35,9 @@ export function formatCommentDate(value: string) {
 }
 
 export function formatDateRange(startDate: string, endDate: string) {
-  return `${dayjs(startDate).format('DD MMM YYYY')} - ${dayjs(endDate).format('DD MMM YYYY')}`
+  const formattedStart = dayjs(startDate).format('DD MMM YYYY')
+  const formattedEnd = endDate ? dayjs(endDate).format('DD MMM YYYY') : 'Open'
+  return `${formattedStart} - ${formattedEnd}`
 }
 
 export function formatWeeklyRange(year: number, week: number) {
@@ -118,21 +118,6 @@ export function serializeStringLines(values: string[]) {
   return values.join('\n')
 }
 
-export function serializeReminderCadenceLines(values: ReminderCadenceOption[]) {
-  return values.map((entry) => `${entry.label} | ${entry.intervalDays}`).join('\n')
-}
-
-export function parseReminderCadenceLines(value: string) {
-  return uniqueTrimmedLines(value).map((entry) => {
-    const [labelPart, intervalPart] = entry.split('|').map((s) => s.trim())
-    const intervalDays = Number(intervalPart)
-    return {
-      label: labelPart ?? '',
-      intervalDays: Number.isFinite(intervalDays) && intervalDays >= 0 ? intervalDays : NaN,
-    }
-  })
-}
-
 export function formatRecordKey(recordId: string) {
   return `TRK-${recordId.slice(0, 6).toUpperCase()}`
 }
@@ -209,7 +194,8 @@ export function matchesSharedFilters(record: ActivityRecord, filters: StatsFilte
 // ── Record aggregation ────────────────────────────────────────────────────────
 
 export function durationDays(record: ActivityRecord) {
-  return Math.max(dayjs(record.endDate).diff(dayjs(record.startDate), 'day'), 0) + 1
+  const endDate = record.endDate ? dayjs(record.endDate) : dayjs()
+  return Math.max(endDate.diff(dayjs(record.startDate), 'day'), 0) + 1
 }
 
 export function sortedComments(comments: RecordComment[]) {
@@ -298,7 +284,7 @@ export function buildMonthlyOpenActivityBuckets(
 ) {
   if (records.length === 0) return []
   const starts = records.map((r) => dayjs(r.startDate))
-  const ends = records.map((r) => dayjs(r.endDate))
+  const ends = records.map((r) => (r.endDate ? dayjs(r.endDate) : dayjs()))
   const firstMonth = starts.reduce((e, v) => (v.isBefore(e) ? v : e), starts[0]).startOf('month')
   const lastMonth = ends.reduce((l, v) => (v.isAfter(l) ? v : l), ends[0]).startOf('month')
   const buckets: { label: string; value: number }[] = []
@@ -311,7 +297,7 @@ export function buildMonthlyOpenActivityBuckets(
     const monthEnd = cursor.endOf('month')
     const open = records.filter((r) => {
       const s = dayjs(r.startDate).startOf('day')
-      const e = dayjs(r.endDate).endOf('day')
+      const e = r.endDate ? dayjs(r.endDate).endOf('day') : dayjs().endOf('day')
       return !s.isAfter(monthEnd, 'day') && !e.isBefore(monthStart, 'day')
     })
     const value = weighted
@@ -379,14 +365,6 @@ export function activityStatusColor(status: ActivityStatus) {
   }
 }
 
-export function reminderIntervalDays(
-  cadence: ReminderCadence,
-  reminderCadences: ReminderCadenceOption[],
-) {
-  const match = reminderCadences.find((e) => e.label === cadence)
-  return !match || match.intervalDays <= 0 ? null : match.intervalDays
-}
-
 export function recordTimelineMoments(record: ActivityRecord) {
   return [
     dayjs(record.lastModifiedAt || record.submittedAt),
@@ -400,38 +378,29 @@ export function latestRecordMoment(record: ActivityRecord) {
   return recordTimelineMoments(record).sort((a, b) => b.valueOf() - a.valueOf())[0]
 }
 
-export function reminderDueMoment(record: ActivityRecord, reminderCadences: ReminderCadenceOption[]) {
-  const intervalDays = reminderIntervalDays(record.reminderCadence, reminderCadences)
-  return intervalDays ? latestRecordMoment(record).add(intervalDays, 'day') : null
-}
-
-export function recordSignalState(record: ActivityRecord, reminderCadences: ReminderCadenceOption[]) {
+export function recordSignalState(record: ActivityRecord) {
   const today = dayjs().endOf('day')
-  const endDate = dayjs(record.endDate)
+  const endDate = record.endDate ? dayjs(record.endDate) : null
   const latestMoment = latestRecordMoment(record)
-  const reminderDue = reminderDueMoment(record, reminderCadences)
   const isCompleted = record.status.toLowerCase() === 'completed'
 
   return {
-    overdue: !isCompleted && endDate.isBefore(today, 'day'),
+    overdue: !isCompleted && endDate !== null && endDate.isBefore(today, 'day'),
     dueSoon:
       !isCompleted &&
+      endDate !== null &&
       !endDate.isBefore(today, 'day') &&
       endDate.diff(dayjs().startOf('day'), 'day') <= 7,
     stale: !isCompleted && dayjs().diff(latestMoment, 'day') >= 14,
-    reminderDue:
-      !isCompleted && reminderDue !== null && reminderDue.isBefore(today.add(1, 'millisecond')),
-    reminderDate: reminderDue,
     latestMoment,
   }
 }
 
-export function signalBadges(record: ActivityRecord, reminderCadences: ReminderCadenceOption[]) {
-  const signals = recordSignalState(record, reminderCadences)
+export function signalBadges(record: ActivityRecord) {
+  const signals = recordSignalState(record)
   const badges: Array<{ label: string; color: string }> = []
   if (signals.overdue) badges.push({ label: 'Overdue', color: 'red' })
   else if (signals.dueSoon) badges.push({ label: 'Due soon', color: 'yellow' })
   if (signals.stale) badges.push({ label: 'Stale', color: 'orange' })
-  if (signals.reminderDue) badges.push({ label: 'Reminder due', color: 'grape' })
   return badges
 }

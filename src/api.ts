@@ -44,7 +44,7 @@ export const defaultTrackerSettings: TrackerSettings = {
     Release: 1,
     Research: 1,
   },
-  priorities: ['Low', 'Mid', 'High'],
+  priorities: ['Low', 'Normal', 'High', 'Critical'],
   efforts: ['Low', 'Mid', 'High'],
   impacts: ['Low', 'Mid', 'High'],
   statuses: ['Scheduled', 'Open', 'On Hold', 'Halted', 'Completed'],

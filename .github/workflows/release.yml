@@ -45,15 +45,27 @@ jobs:
 
       - name: Sign macOS app (ad-hoc)
         if: matrix.name == 'macos'
-        run: codesign --force --deep --sign - src-tauri/target/release/bundle/macos/Tracker.app
+        shell: bash
+        run: |
+          app_path="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$app_path" ]; then
+            echo "No macOS app bundle found"
+            exit 1
+          fi
+          codesign --force --deep --sign - "$app_path"
 
       - name: Prepare release artifacts
         shell: bash
         run: |
           mkdir -p release
           if [ "${{ matrix.name }}" = "macos" ]; then
+            app_path="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+            if [ -z "$app_path" ]; then
+              echo "No macOS app bundle found"
+              exit 1
+            fi
             ditto -c -k --sequesterRsrc --keepParent \
-              src-tauri/target/release/bundle/macos/Tracker.app \
+              "$app_path" \
               "release/Tracker_${GITHUB_REF_NAME}_${{ matrix.name }}_${RUNNER_ARCH}.zip"
           else
             find src-tauri/target/release/bundle -type f \( -name '*.msi' -o -name '*.exe' \) -exec cp {} release/ \;

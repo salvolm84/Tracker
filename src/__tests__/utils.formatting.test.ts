@@ -149,6 +149,10 @@ describe('formatDateRange', () => {
   it('handles same start and end date', () => {
     expect(formatDateRange('2024-06-15', '2024-06-15')).toBe('15 Jun 2024 - 15 Jun 2024')
   })
+
+  it('labels an empty end date as open', () => {
+    expect(formatDateRange('2024-06-15', '')).toBe('15 Jun 2024 - Open')
+  })
 })
 
 // ── isoWeeksInYear ────────────────────────────────────────────────────────────

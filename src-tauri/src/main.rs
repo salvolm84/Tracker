@@ -12,13 +12,17 @@ use std::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{DateTime, NaiveDate, Utc};
 use fs2::FileExt;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 mod attachments;
 
 struct SaveLock(Mutex<()>);
+
+const DEMERIT_VALUES: &[&str] = &[
+    "DEM100", "DEM40", "DEM20FS", "DEM20", "DEM10FS", "DEM10", "DEM1", "NA",
+];
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -128,8 +132,8 @@ struct DebugRecord {
     last_modified_at: String,
     #[serde(default)]
     occurrence_phase: String,
-    #[serde(default)]
-    demerit: u32,
+    #[serde(default = "default_demerit_value", deserialize_with = "deserialize_demerit")]
+    demerit: String,
     #[serde(default)]
     linked_activity_ids: Vec<String>,
     #[serde(default)]
@@ -157,8 +161,8 @@ struct DebugInput {
     outcome: Vec<String>,
     #[serde(default)]
     occurrence_phase: String,
-    #[serde(default)]
-    demerit: u32,
+    #[serde(default = "default_demerit_value")]
+    demerit: String,
     #[serde(default)]
     linked_activity_ids: Vec<String>,
     #[serde(default)]
@@ -181,6 +185,7 @@ struct ActivityInput {
     impact: String,
     priority: String,
     status: String,
+    #[serde(default = "default_reminder_cadence")]
     reminder_cadence: String,
     categories: Vec<String>,
     #[serde(default)]
@@ -220,6 +225,8 @@ struct Attachment {
 struct RecordComment {
     id: String,
     created_at: String,
+    #[serde(default)]
+    author: String,
     message: String,
     #[serde(default)]
     attachments: Vec<Attachment>,
@@ -990,10 +997,54 @@ fn sanitize_and_validate_debug(
     }
 
     validate_allowed_values(&payload.outcome, &debug_settings.outcome_options, "Outcome")?;
+    payload.demerit = payload.demerit.trim().to_uppercase();
+    if payload.demerit.is_empty() {
+        payload.demerit = default_demerit_value();
+    } else if !DEMERIT_VALUES.contains(&payload.demerit.as_str()) {
+        let numeric_alias = format!("DEM{}", payload.demerit);
+        if DEMERIT_VALUES.contains(&numeric_alias.as_str()) {
+            payload.demerit = numeric_alias;
+        } else {
+            return Err("Demerit must be one of DEM100, DEM40, DEM20FS, DEM20, DEM10FS, DEM10, DEM1, or NA".to_string());
+        }
+    }
 
     validate_attachments(&payload.attachments, "record")?;
 
     Ok(payload)
+}
+
+fn default_demerit_value() -> String {
+    "NA".to_string()
+}
+
+fn normalize_demerit_value(value: &str) -> String {
+    let normalized = value.trim().to_uppercase();
+    if normalized.is_empty() {
+        return default_demerit_value();
+    }
+    if DEMERIT_VALUES.contains(&normalized.as_str()) {
+        return normalized;
+    }
+    let numeric_alias = format!("DEM{normalized}");
+    if DEMERIT_VALUES.contains(&numeric_alias.as_str()) {
+        return numeric_alias;
+    }
+    default_demerit_value()
+}
+
+fn deserialize_demerit<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let demerit = match value {
+        serde_json::Value::String(text) => normalize_demerit_value(&text),
+        serde_json::Value::Number(number) => normalize_demerit_value(&number.to_string()),
+        serde_json::Value::Null => default_demerit_value(),
+        _ => default_demerit_value(),
+    };
+    Ok(demerit)
 }
 
 fn write_debug_record(db_path: &Path, payload: DebugInput) -> Result<usize, String> {
@@ -1131,15 +1182,20 @@ fn default_category_impact_factor_values() -> BTreeMap<String, f64> {
 }
 
 fn default_priority_values() -> Vec<String> {
-    vec!["Low".to_string(), "Mid".to_string(), "High".to_string()]
+    vec![
+        "Low".to_string(),
+        "Normal".to_string(),
+        "High".to_string(),
+        "Critical".to_string(),
+    ]
 }
 
 fn default_effort_values() -> Vec<String> {
-    default_priority_values()
+    vec!["Low".to_string(), "Mid".to_string(), "High".to_string()]
 }
 
 fn default_impact_values() -> Vec<String> {
-    default_priority_values()
+    default_effort_values()
 }
 
 fn default_status_values() -> Vec<String> {
@@ -1205,6 +1261,22 @@ fn default_db_file_name() -> &'static str {
 
 fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn default_comment_author() -> String {
+    "Unknown user".to_string()
+}
+
+fn current_account_name() -> String {
+    ["USERNAME", "USER", "LOGNAME"]
+        .iter()
+        .find_map(|key| {
+            env::var(key)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(default_comment_author)
 }
 
 fn history_entry(kind: &str, message: String) -> RecordHistoryEntry {
@@ -1345,9 +1417,10 @@ fn append_activity_comment(
     }
 
     let payload = sanitize_and_validate_comment(payload)?;
+    let author = current_account_name();
     let db_path = shared_db_path(&app)?;
     let record_count = with_exclusive_db_lock(&db_path, |db_path| {
-        append_comment_to_activity_record(db_path, &record_id, payload)
+        append_comment_to_activity_record(db_path, &record_id, payload, author)
     })?;
 
     submit_result(&db_path, record_count, None)
@@ -1981,6 +2054,7 @@ fn append_comment_to_activity_record(
     db_path: &Path,
     record_id: &str,
     payload: CommentInput,
+    author: String,
 ) -> Result<usize, String> {
     let mut database = read_database_unlocked(db_path)?;
 
@@ -1996,6 +2070,7 @@ fn append_comment_to_activity_record(
     record.comments.push(RecordComment {
         id: Uuid::new_v4().to_string(),
         created_at: comment_created_at.clone(),
+        author,
         message: payload.message,
         attachments,
     });
@@ -2298,10 +2373,14 @@ fn build_database_stats(records: &[ActivityRecord]) -> DatabaseStats {
             }
         }
 
-        if let (Ok(start_date), Ok(end_date)) = (
-            NaiveDate::parse_from_str(&record.start_date, "%Y-%m-%d"),
-            NaiveDate::parse_from_str(&record.end_date, "%Y-%m-%d"),
-        ) {
+        if let Ok(start_date) = NaiveDate::parse_from_str(&record.start_date, "%Y-%m-%d") {
+            let end_date = if record.end_date.trim().is_empty() {
+                Utc::now().date_naive()
+            } else if let Ok(end_date) = NaiveDate::parse_from_str(&record.end_date, "%Y-%m-%d") {
+                end_date
+            } else {
+                continue;
+            };
             total_duration_days += (end_date - start_date).num_days().max(0) + 1;
         }
     }
@@ -2330,7 +2409,7 @@ fn build_database_stats(records: &[ActivityRecord]) -> DatabaseStats {
 }
 
 fn ordered_buckets(counts: &BTreeMap<String, usize>) -> Vec<CountBucket> {
-    let preferred_order = ["High", "Mid", "Low"];
+    let preferred_order = ["Critical", "High", "Normal", "Mid", "Low"];
     let mut buckets = Vec::new();
 
     for label in preferred_order {
@@ -2518,6 +2597,9 @@ fn sanitize_settings(mut settings: TrackerSettings) -> Result<TrackerSettings, S
     settings.category_impact_factors =
         sanitize_category_impact_factors(&settings.categories, settings.category_impact_factors)?;
     settings.priorities = sanitize_string_list(settings.priorities);
+    if is_legacy_default_priorities(&settings.priorities) {
+        settings.priorities = default_priority_values();
+    }
     settings.efforts = sanitize_string_list(settings.efforts);
     settings.impacts = sanitize_string_list(settings.impacts);
     settings.statuses = sanitize_string_list(settings.statuses);
@@ -2595,8 +2677,28 @@ fn sanitize_reminder_cadence_options(
 fn sanitize_database(mut database: TrackerDatabase) -> Result<TrackerDatabase, String> {
     database.schema_version = default_schema_version();
     database.settings = sanitize_settings(database.settings)?;
+    normalize_legacy_priorities(&database.settings, &mut database.records);
     database.records = sanitize_imported_records(database.records, &database.settings)?;
     Ok(database)
+}
+
+fn is_legacy_default_priorities(priorities: &[String]) -> bool {
+    priorities.len() == 3
+        && priorities[0] == "Low"
+        && priorities[1] == "Mid"
+        && priorities[2] == "High"
+}
+
+fn normalize_legacy_priorities(settings: &TrackerSettings, records: &mut [ActivityRecord]) {
+    if settings.priorities.iter().any(|priority| priority == "Normal")
+        && !settings.priorities.iter().any(|priority| priority == "Mid")
+    {
+        for record in records {
+            if record.priority == "Mid" {
+                record.priority = "Normal".to_string();
+            }
+        }
+    }
 }
 
 fn sanitize_imported_records(
@@ -2784,17 +2886,20 @@ fn sanitize_and_validate(
 
     validate_allowed_values(&payload.projects, &settings.projects, "Project")?;
 
-    if payload.start_date.is_empty() || payload.end_date.is_empty() {
-        return Err("Start date and end date are required".to_string());
+    if payload.start_date.is_empty() {
+        return Err("Start date is required".to_string());
     }
 
     let start_date = NaiveDate::parse_from_str(&payload.start_date, "%Y-%m-%d")
         .map_err(|_| "Start date must use the YYYY-MM-DD format".to_string())?;
-    let end_date = NaiveDate::parse_from_str(&payload.end_date, "%Y-%m-%d")
-        .map_err(|_| "End date must use the YYYY-MM-DD format".to_string())?;
 
-    if end_date < start_date {
-        return Err("End date cannot be earlier than start date".to_string());
+    if !payload.end_date.is_empty() {
+        let end_date = NaiveDate::parse_from_str(&payload.end_date, "%Y-%m-%d")
+            .map_err(|_| "End date must use the YYYY-MM-DD format".to_string())?;
+
+        if end_date < start_date {
+            return Err("End date cannot be earlier than start date".to_string());
+        }
     }
 
     if payload.departments.is_empty() {
@@ -2991,6 +3096,11 @@ fn sanitize_imported_record(
         .filter_map(|comment| {
             let id = comment.id.trim().to_string();
             let created_at = comment.created_at.trim().to_string();
+            let author = if comment.author.trim().is_empty() {
+                default_comment_author()
+            } else {
+                comment.author.trim().to_string()
+            };
             let message = comment.message.trim().to_string();
 
             if id.is_empty() || created_at.is_empty() || message.is_empty() {
@@ -3005,6 +3115,7 @@ fn sanitize_imported_record(
             Some(RecordComment {
                 id,
                 created_at,
+                author,
                 message,
                 attachments,
             })
@@ -3321,12 +3432,17 @@ mod tests {
     // ── default values ────────────────────────────────────────────────────────
 
     #[test]
-    fn default_priority_values_returns_three_levels() {
+    fn default_priority_values_returns_tracker_priority_levels() {
         let result = default_priority_values();
-        assert_eq!(result.len(), 3);
-        assert!(result.contains(&"Low".to_string()));
-        assert!(result.contains(&"Mid".to_string()));
-        assert!(result.contains(&"High".to_string()));
+        assert_eq!(
+            result,
+            vec![
+                "Low".to_string(),
+                "Normal".to_string(),
+                "High".to_string(),
+                "Critical".to_string(),
+            ],
+        );
     }
 
     #[test]
