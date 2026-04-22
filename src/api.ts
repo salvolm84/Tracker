@@ -10,6 +10,9 @@ import type {
   DatabaseBackup,
   DatabaseDocument,
   DatabaseStats,
+  DebugRecord,
+  DebugPayload,
+  DebugSettings,
   QuickUpdatePayload,
   ReminderCadenceOption,
   SettingsRelabelPayload,
@@ -180,6 +183,40 @@ export async function replaceDatabaseRecords(
 
 export async function restoreDatabaseBackup(backupPath: string) {
   return invoke<SubmitResult>('restore_database_backup', { backupPath })
+}
+
+export async function getDebugRecords() {
+  return invoke<DebugRecord[]>('get_debug_records')
+}
+
+export async function submitDebugRecord(payload: DebugPayload) {
+  return invoke<SubmitResult>('submit_debug_record', { payload })
+}
+
+export async function updateDebugRecord(recordId: string, payload: DebugPayload) {
+  return invoke<SubmitResult>('update_debug_record', { recordId, payload })
+}
+
+export async function deleteDebugRecord(
+  recordId: string,
+  expectedLastModifiedAt?: string | null,
+) {
+  return invoke<SubmitResult>('delete_debug_record', {
+    recordId,
+    expectedLastModifiedAt: expectedLastModifiedAt ?? null,
+  })
+}
+
+export async function readDebugAttachmentData(recordId: string, attachmentId: string) {
+  return invoke<AttachmentData>('read_debug_attachment_data', { recordId, attachmentId })
+}
+
+export async function getDebugSettings() {
+  return invoke<DebugSettings>('get_debug_settings')
+}
+
+export async function updateDebugSettings(payload: DebugSettings) {
+  return invoke<SubmitResult>('update_debug_settings', { payload })
 }
 
 export function buildDatabaseDocument(

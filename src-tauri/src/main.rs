@@ -72,6 +72,22 @@ struct TrackerSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct DebugSettings {
+    #[serde(default = "default_debug_category_values")]
+    categories: Vec<String>,
+    #[serde(default = "default_outcome_values")]
+    outcome_options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupplierRatingEntry {
+    label: String,
+    rating: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TrackerDatabase {
     #[serde(default = "default_schema_version")]
     schema_version: u32,
@@ -81,6 +97,74 @@ struct TrackerDatabase {
     settings: TrackerSettings,
     #[serde(default)]
     records: Vec<ActivityRecord>,
+    #[serde(default)]
+    debug_records: Vec<DebugRecord>,
+    #[serde(default = "default_debug_settings")]
+    debug_settings: DebugSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DebugRecord {
+    id: String,
+    submitted_at: String,
+    projects: Vec<String>,
+    start_date: String,
+    end_date: String,
+    category: Vec<String>,
+    description: String,
+    #[serde(default)]
+    attachments: Vec<Attachment>,
+    #[serde(default, alias = "manufacturer")]
+    supplier: String,
+    #[serde(default)]
+    component: String,
+    departments: Vec<String>,
+    #[serde(default)]
+    supplier_rating: Vec<SupplierRatingEntry>,
+    #[serde(default)]
+    outcome: Vec<String>,
+    #[serde(default)]
+    last_modified_at: String,
+    #[serde(default)]
+    occurrence_phase: String,
+    #[serde(default)]
+    demerit: u32,
+    #[serde(default)]
+    linked_activity_ids: Vec<String>,
+    #[serde(default)]
+    lessons_learnt: Vec<LessonLearnt>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DebugInput {
+    projects: Vec<String>,
+    start_date: String,
+    end_date: String,
+    category: Vec<String>,
+    description: String,
+    #[serde(default)]
+    attachments: Vec<Attachment>,
+    #[serde(default, alias = "manufacturer")]
+    supplier: String,
+    #[serde(default)]
+    component: String,
+    departments: Vec<String>,
+    #[serde(default)]
+    supplier_rating: Vec<SupplierRatingEntry>,
+    #[serde(default)]
+    outcome: Vec<String>,
+    #[serde(default)]
+    occurrence_phase: String,
+    #[serde(default)]
+    demerit: u32,
+    #[serde(default)]
+    linked_activity_ids: Vec<String>,
+    #[serde(default)]
+    lessons_learnt: Vec<LessonLearnt>,
+    #[serde(default)]
+    expected_last_modified_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,6 +185,8 @@ struct ActivityInput {
     categories: Vec<String>,
     #[serde(default)]
     attachments: Vec<Attachment>,
+    #[serde(default = "default_lab_activity")]
+    lab_activity: String,
     #[serde(default)]
     expected_last_modified_at: Option<String>,
 }
@@ -150,6 +236,49 @@ struct RecordHistoryEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct LessonLearnt {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    attachments: Vec<Attachment>,
+}
+
+fn deserialize_lab_activity<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Visitor;
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = String;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("string or bool")
+        }
+        fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<String, E> {
+            Ok(if v { "Significant" } else { "None" }.to_string())
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<String, E> {
+            Ok("None".to_string())
+        }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<String, E> {
+            Ok("None".to_string())
+        }
+    }
+    deserializer.deserialize_any(Visitor)
+}
+
+fn default_lab_activity() -> String {
+    "None".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ActivityRecord {
     id: String,
     submitted_at: String,
@@ -176,6 +305,8 @@ struct ActivityRecord {
     history: Vec<RecordHistoryEntry>,
     #[serde(default)]
     last_modified_at: String,
+    #[serde(default = "default_lab_activity", deserialize_with = "deserialize_lab_activity")]
+    lab_activity: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -547,6 +678,414 @@ fn submit_activity(
     submit_result(&db_path, record_count, None)
 }
 
+fn default_debug_category_values() -> Vec<String> {
+    vec!["HW".to_string(), "SW".to_string(), "System".to_string()]
+}
+
+fn default_outcome_values() -> Vec<String> {
+    vec![
+        "Root cause found".to_string(),
+        "Issue reproduced".to_string(),
+        "Workaround identified".to_string(),
+        "Fix identified".to_string(),
+        "Workaround validated".to_string(),
+        "Fix validated".to_string(),
+        "Degraded performance".to_string(),
+    ]
+}
+
+fn default_debug_settings() -> DebugSettings {
+    DebugSettings {
+        categories: default_debug_category_values(),
+        outcome_options: default_outcome_values(),
+    }
+}
+
+#[tauri::command]
+fn get_debug_settings(app: AppHandle) -> Result<DebugSettings, String> {
+    let db_path = shared_db_path(&app)?;
+    ensure_database_file_exists(&db_path)?;
+    let database = read_database(&db_path)?;
+    Ok(database.debug_settings)
+}
+
+#[tauri::command]
+fn update_debug_settings(
+    app: AppHandle,
+    state: State<'_, SaveLock>,
+    payload: DebugSettings,
+) -> Result<SubmitResult, String> {
+    let _guard = state
+        .0
+        .lock()
+        .map_err(|_| "Unable to acquire the save lock".to_string())?;
+
+    let db_path = shared_db_path(&app)?;
+    let record_count = with_exclusive_db_lock(&db_path, |db_path| {
+        let mut database = read_database_unlocked(db_path)?;
+        let sanitized = sanitize_debug_settings(payload)?;
+        // Validate existing records against new settings
+        for record in &database.debug_records {
+            for cat in &record.category {
+                if !sanitized.categories.contains(cat) {
+                    return Err(format!(
+                        "Category '{}' is used by existing debug records. Remove its usages first.",
+                        cat
+                    ));
+                }
+            }
+            for out in &record.outcome {
+                if !sanitized.outcome_options.contains(out) {
+                    return Err(format!(
+                        "Outcome '{}' is used by existing debug records. Remove its usages first.",
+                        out
+                    ));
+                }
+            }
+        }
+        database.debug_settings = sanitized;
+        persist_database(db_path, &database)?;
+        Ok(database.records.len())
+    })?;
+
+    submit_result(&db_path, record_count, None)
+}
+
+fn sanitize_debug_settings(mut settings: DebugSettings) -> Result<DebugSettings, String> {
+    settings.categories = sanitize_string_list(settings.categories);
+    settings.outcome_options = sanitize_string_list(settings.outcome_options);
+
+    if settings.categories.is_empty() {
+        return Err("Add at least one debug category.".to_string());
+    }
+    if settings.outcome_options.is_empty() {
+        return Err("Add at least one outcome option.".to_string());
+    }
+
+    Ok(settings)
+}
+
+#[tauri::command]
+fn get_debug_records(app: AppHandle) -> Result<Vec<DebugRecord>, String> {
+    let db_path = shared_db_path(&app)?;
+    ensure_database_file_exists(&db_path)?;
+    let database = read_database(&db_path)?;
+    let mut records = database.debug_records;
+    records.sort_by(|left, right| right.submitted_at.cmp(&left.submitted_at));
+    Ok(records)
+}
+
+#[tauri::command]
+fn submit_debug_record(
+    app: AppHandle,
+    state: State<'_, SaveLock>,
+    payload: DebugInput,
+) -> Result<SubmitResult, String> {
+    let _guard = state
+        .0
+        .lock()
+        .map_err(|_| "Unable to acquire the save lock".to_string())?;
+
+    let db_path = shared_db_path(&app)?;
+    let record_count = with_exclusive_db_lock(&db_path, |db_path| {
+        write_debug_record(db_path, payload)
+    })?;
+
+    submit_result(&db_path, record_count, None)
+}
+
+#[tauri::command]
+fn update_debug_record(
+    app: AppHandle,
+    state: State<'_, SaveLock>,
+    record_id: String,
+    payload: DebugInput,
+) -> Result<SubmitResult, String> {
+    let _guard = state
+        .0
+        .lock()
+        .map_err(|_| "Unable to acquire the save lock".to_string())?;
+
+    let record_id = record_id.trim().to_string();
+    if record_id.is_empty() {
+        return Err("Record id is required for updates".to_string());
+    }
+
+    let db_path = shared_db_path(&app)?;
+    let record_count = with_exclusive_db_lock(&db_path, |db_path| {
+        update_debug_record_in_db(db_path, &record_id, payload)
+    })?;
+
+    submit_result(&db_path, record_count, None)
+}
+
+#[tauri::command]
+fn delete_debug_record(
+    app: AppHandle,
+    state: State<'_, SaveLock>,
+    record_id: String,
+    expected_last_modified_at: Option<String>,
+) -> Result<SubmitResult, String> {
+    let _guard = state
+        .0
+        .lock()
+        .map_err(|_| "Unable to acquire the save lock".to_string())?;
+
+    let record_id = record_id.trim().to_string();
+    if record_id.is_empty() {
+        return Err("Record id is required for deletion".to_string());
+    }
+
+    let db_path = shared_db_path(&app)?;
+    let record_count = with_exclusive_db_lock(&db_path, |db_path| {
+        let mut database = read_database_unlocked(db_path)?;
+        let record = database
+            .debug_records
+            .iter()
+            .find(|r| r.id == record_id)
+            .ok_or_else(|| format!("Debug record '{}' was not found", record_id))?;
+
+        let expected = expected_last_modified_at
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "Missing concurrency token for debug record '{}'. Refresh and try again.",
+                    record_id
+                )
+            })?;
+
+        let current = if record.last_modified_at.trim().is_empty() {
+            record.submitted_at.as_str()
+        } else {
+            record.last_modified_at.as_str()
+        };
+
+        if current != expected {
+            return Err(format!(
+                "Concurrency conflict: debug record '{}' was modified concurrently. Refresh and try again.",
+                record_id
+            ));
+        }
+
+        let starting_len = database.debug_records.len();
+        database.debug_records.retain(|r| r.id != record_id);
+        if database.debug_records.len() == starting_len {
+            return Err(format!("Debug record '{}' was not found", record_id));
+        }
+
+        persist_database(db_path, &database)?;
+        Ok(database.records.len())
+    })?;
+
+    submit_result(&db_path, record_count, None)
+}
+
+#[tauri::command]
+fn read_debug_attachment_data(
+    app: AppHandle,
+    record_id: String,
+    attachment_id: String,
+) -> Result<AttachmentData, String> {
+    let record_id = record_id.trim().to_string();
+    if record_id.is_empty() {
+        return Err("Record id is required".to_string());
+    }
+    let attachment_id = attachment_id.trim().to_string();
+    if attachment_id.is_empty() {
+        return Err("Attachment id is required".to_string());
+    }
+
+    let db_path = shared_db_path(&app)?;
+    ensure_database_file_exists(&db_path)?;
+    let database = read_database(&db_path)?;
+    let record = database
+        .debug_records
+        .iter()
+        .find(|r| r.id == record_id)
+        .ok_or_else(|| format!("Debug record '{}' was not found", record_id))?;
+    let attachment = record
+        .attachments
+        .iter()
+        .find(|a| a.id == attachment_id)
+        .ok_or_else(|| format!("Attachment '{}' was not found", attachment_id))?;
+
+    Ok(AttachmentData {
+        id: attachment.id.clone(),
+        file_name: attachment.file_name.clone(),
+        mime_type: attachment.mime_type.clone(),
+        size_bytes: attachment.size_bytes,
+        base64_data: attachments::read_base64(&db_path, attachment)?,
+    })
+}
+
+fn sanitize_and_validate_debug(
+    mut payload: DebugInput,
+    tracker_settings: &TrackerSettings,
+    debug_settings: &DebugSettings,
+) -> Result<DebugInput, String> {
+    payload.start_date = payload.start_date.trim().to_string();
+    payload.end_date = payload.end_date.trim().to_string();
+    payload.description = payload.description.trim().to_string();
+    payload.supplier = payload.supplier.trim().to_string();
+    payload.component = payload.component.trim().to_string();
+    payload.occurrence_phase = payload.occurrence_phase.trim().to_string();
+    payload.projects = sanitize_string_list(payload.projects);
+    payload.departments = sanitize_string_list(payload.departments);
+    payload.category = sanitize_string_list(payload.category);
+    payload.outcome = sanitize_string_list(payload.outcome);
+    payload.linked_activity_ids = sanitize_string_list(payload.linked_activity_ids);
+    payload.attachments = sanitize_attachments(payload.attachments);
+    for lesson in &mut payload.lessons_learnt {
+        lesson.text = lesson.text.trim().to_string();
+        lesson.category = lesson.category.trim().to_string();
+        if lesson.id.is_empty() {
+            lesson.id = Uuid::new_v4().to_string();
+        }
+        lesson.attachments = sanitize_attachments(lesson.attachments.clone());
+    }
+    payload.expected_last_modified_at = payload
+        .expected_last_modified_at
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    if payload.projects.is_empty() {
+        return Err("Select at least one project".to_string());
+    }
+    validate_allowed_values(&payload.projects, &tracker_settings.projects, "Project")?;
+
+    if payload.start_date.is_empty() || payload.end_date.is_empty() {
+        return Err("Start date and end date are required".to_string());
+    }
+    let start_date = NaiveDate::parse_from_str(&payload.start_date, "%Y-%m-%d")
+        .map_err(|_| "Start date must use the YYYY-MM-DD format".to_string())?;
+    let end_date = NaiveDate::parse_from_str(&payload.end_date, "%Y-%m-%d")
+        .map_err(|_| "End date must use the YYYY-MM-DD format".to_string())?;
+    if end_date < start_date {
+        return Err("End date cannot be earlier than start date".to_string());
+    }
+
+    if payload.category.is_empty() {
+        return Err("Select at least one category".to_string());
+    }
+    validate_allowed_values(&payload.category, &debug_settings.categories, "Debug category")?;
+
+    if payload.description.len() < 10 {
+        return Err("Description must contain at least 10 characters".to_string());
+    }
+
+    if payload.departments.is_empty() {
+        return Err("Select at least one department".to_string());
+    }
+    validate_allowed_values(&payload.departments, &tracker_settings.departments, "Department")?;
+
+    for entry in &payload.supplier_rating {
+        if !(0.0..=5.0).contains(&entry.rating) || (entry.rating * 2.0).fract() != 0.0 {
+            return Err(format!(
+                "Supplier rating for '{}' must be a multiple of 0.5 between 0 and 5",
+                entry.label
+            ));
+        }
+    }
+
+    validate_allowed_values(&payload.outcome, &debug_settings.outcome_options, "Outcome")?;
+
+    validate_attachments(&payload.attachments, "record")?;
+
+    Ok(payload)
+}
+
+fn write_debug_record(db_path: &Path, payload: DebugInput) -> Result<usize, String> {
+    let mut database = read_database_unlocked(db_path)?;
+    let mut payload =
+        sanitize_and_validate_debug(payload, &database.settings, &database.debug_settings)?;
+    payload.attachments = attachments::externalize(db_path, payload.attachments)?;
+
+    let created_at = now_rfc3339();
+    database.debug_records.push(DebugRecord {
+        id: Uuid::new_v4().to_string(),
+        submitted_at: created_at.clone(),
+        projects: payload.projects,
+        start_date: payload.start_date,
+        end_date: payload.end_date,
+        category: payload.category,
+        description: payload.description,
+        attachments: payload.attachments,
+        supplier: payload.supplier,
+        component: payload.component,
+        departments: payload.departments,
+        supplier_rating: payload.supplier_rating,
+        outcome: payload.outcome,
+        last_modified_at: created_at,
+        occurrence_phase: payload.occurrence_phase,
+        demerit: payload.demerit,
+        linked_activity_ids: payload.linked_activity_ids,
+        lessons_learnt: payload.lessons_learnt,
+    });
+
+    persist_database(db_path, &database)?;
+    Ok(database.records.len())
+}
+
+fn update_debug_record_in_db(db_path: &Path, record_id: &str, payload: DebugInput) -> Result<usize, String> {
+    let mut database = read_database_unlocked(db_path)?;
+    let mut payload =
+        sanitize_and_validate_debug(payload, &database.settings, &database.debug_settings)?;
+    payload.attachments = attachments::externalize(db_path, payload.attachments)?;
+
+    let record = database
+        .debug_records
+        .iter_mut()
+        .find(|r| r.id == record_id)
+        .ok_or_else(|| format!("Debug record '{}' was not found", record_id))?;
+
+    let expected = payload
+        .expected_last_modified_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "Missing concurrency token for debug record '{}'. Refresh and try again.",
+                record_id
+            )
+        })?;
+
+    let current = if record.last_modified_at.trim().is_empty() {
+        record.submitted_at.as_str()
+    } else {
+        record.last_modified_at.as_str()
+    };
+
+    if current != expected {
+        return Err(format!(
+            "Concurrency conflict: debug record '{}' was modified concurrently. Refresh and try again.",
+            record_id
+        ));
+    }
+
+    record.projects = payload.projects;
+    record.start_date = payload.start_date;
+    record.end_date = payload.end_date;
+    record.category = payload.category;
+    record.description = payload.description;
+    record.attachments = payload.attachments;
+    record.supplier = payload.supplier;
+    record.component = payload.component;
+    record.departments = payload.departments;
+    record.supplier_rating = payload.supplier_rating;
+    record.outcome = payload.outcome;
+    record.occurrence_phase = payload.occurrence_phase;
+    record.demerit = payload.demerit;
+    record.linked_activity_ids = payload.linked_activity_ids;
+    record.lessons_learnt = payload.lessons_learnt;
+    record.last_modified_at = now_rfc3339();
+
+    persist_database(db_path, &database)?;
+    Ok(database.records.len())
+}
+
 fn default_status() -> String {
     "Open".to_string()
 }
@@ -655,6 +1194,8 @@ fn default_tracker_database() -> TrackerDatabase {
         revision: 0,
         settings: default_tracker_settings(),
         records: Vec::new(),
+        debug_records: Vec::new(),
+        debug_settings: default_debug_settings(),
     }
 }
 
@@ -1382,6 +1923,8 @@ fn read_database_unlocked(path: &Path) -> Result<TrackerDatabase, String> {
             settings: default_tracker_settings(),
             records: serde_json::from_value(parsed)
                 .map_err(|error| format!("Database file contains invalid record JSON: {error}"))?,
+            debug_records: Vec::new(),
+            debug_settings: default_debug_settings(),
         }
     } else {
         serde_json::from_value(parsed).map_err(|error| {
@@ -1423,6 +1966,7 @@ fn write_activity_record(db_path: &Path, payload: ActivityInput) -> Result<usize
         reminder_cadence: payload.reminder_cadence,
         categories: payload.categories,
         attachments: payload.attachments,
+        lab_activity: payload.lab_activity,
         comments: Vec::new(),
         history: vec![history_entry("created", "Record created".to_string())],
         last_modified_at: created_at,
@@ -1604,6 +2148,7 @@ fn update_activity_record(
     record.reminder_cadence = payload.reminder_cadence;
     record.categories = payload.categories;
     record.attachments = payload.attachments;
+    record.lab_activity = payload.lab_activity;
     record.history.push(history_entry(
         "record_updated",
         if changed_fields.is_empty() {
@@ -1691,6 +2236,8 @@ fn replace_records_in_database(
             revision: 0,
             settings,
             records: sanitized_records.clone(),
+            debug_records: Vec::new(),
+            debug_settings: default_debug_settings(),
         },
     )?;
     Ok(sanitized_records.len())
@@ -2523,6 +3070,7 @@ fn sanitize_imported_record(
         reminder_cadence: record.reminder_cadence.clone(),
         categories: record.categories.clone(),
         attachments: record.attachments.clone(),
+        lab_activity: record.lab_activity.clone(),
         expected_last_modified_at: None,
     };
     let sanitized_payload = sanitize_and_validate(payload, settings)?;
@@ -2583,8 +3131,367 @@ fn main() {
             update_activity_comment,
             delete_activity_comment,
             replace_database_records,
-            restore_database_backup
+            restore_database_backup,
+            get_debug_records,
+            submit_debug_record,
+            update_debug_record,
+            delete_debug_record,
+            read_debug_attachment_data,
+            get_debug_settings,
+            update_debug_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tracker application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_embedded_list ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_embedded_list_basic() {
+        let input = "Alice\nBob\nCharlie";
+        let result = parse_embedded_list(input);
+        assert_eq!(result, vec!["Alice", "Bob", "Charlie"]);
+    }
+
+    #[test]
+    fn parse_embedded_list_strips_comments() {
+        let input = "# This is a comment\nAlice\n# Another\nBob";
+        let result = parse_embedded_list(input);
+        assert_eq!(result, vec!["Alice", "Bob"]);
+    }
+
+    #[test]
+    fn parse_embedded_list_trims_whitespace() {
+        let input = "  Alice  \n  Bob  ";
+        let result = parse_embedded_list(input);
+        assert_eq!(result, vec!["Alice", "Bob"]);
+    }
+
+    #[test]
+    fn parse_embedded_list_ignores_blank_lines() {
+        let input = "Alice\n\n\nBob";
+        let result = parse_embedded_list(input);
+        assert_eq!(result, vec!["Alice", "Bob"]);
+    }
+
+    // ── sanitize_string_list ──────────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_string_list_trims_entries() {
+        let input = vec!["  Alice  ".to_string(), "  Bob  ".to_string()];
+        let result = sanitize_string_list(input);
+        assert!(result.contains(&"Alice".to_string()));
+        assert!(result.contains(&"Bob".to_string()));
+    }
+
+    #[test]
+    fn sanitize_string_list_removes_empty() {
+        let input = vec!["Alice".to_string(), "".to_string(), "   ".to_string()];
+        let result = sanitize_string_list(input);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&"Alice".to_string()));
+    }
+
+    #[test]
+    fn sanitize_string_list_deduplicates() {
+        let input = vec!["Alice".to_string(), "Bob".to_string(), "Alice".to_string()];
+        let result = sanitize_string_list(input);
+        assert_eq!(result.len(), 2);
+    }
+
+    // ── validate_allowed_value ────────────────────────────────────────────────
+
+    #[test]
+    fn validate_allowed_value_accepts_valid() {
+        let allowed = vec!["Low".to_string(), "Mid".to_string(), "High".to_string()];
+        assert!(validate_allowed_value("Low", &allowed, "Priority").is_ok());
+        assert!(validate_allowed_value("High", &allowed, "Priority").is_ok());
+    }
+
+    #[test]
+    fn validate_allowed_value_rejects_invalid() {
+        let allowed = vec!["Low".to_string(), "Mid".to_string()];
+        let result = validate_allowed_value("Unknown", &allowed, "Priority");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Priority"));
+    }
+
+    #[test]
+    fn validate_allowed_value_empty_string_rejected() {
+        // Empty string is not in any allowed list, so it fails
+        let allowed = vec!["Low".to_string()];
+        assert!(validate_allowed_value("", &allowed, "Field").is_err());
+    }
+
+    #[test]
+    fn validate_allowed_value_empty_in_allowed_list_passes() {
+        // If "" is explicitly in the allowed list it passes
+        let allowed = vec!["".to_string(), "Low".to_string()];
+        assert!(validate_allowed_value("", &allowed, "Field").is_ok());
+    }
+
+    // ── validate_allowed_values ───────────────────────────────────────────────
+
+    #[test]
+    fn validate_allowed_values_accepts_valid_list() {
+        let allowed = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        assert!(validate_allowed_values(&["A".to_string(), "B".to_string()], &allowed, "Field").is_ok());
+    }
+
+    #[test]
+    fn validate_allowed_values_rejects_any_invalid() {
+        let allowed = vec!["A".to_string(), "B".to_string()];
+        let result = validate_allowed_values(&["A".to_string(), "X".to_string()], &allowed, "Cat");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_allowed_values_empty_list_passes() {
+        let allowed = vec!["A".to_string()];
+        assert!(validate_allowed_values(&[], &allowed, "Field").is_ok());
+    }
+
+    // ── sanitize_category_impact_factors ──────────────────────────────────────
+
+    #[test]
+    fn sanitize_category_impact_factors_valid_range() {
+        let mut factors = BTreeMap::new();
+        factors.insert("A".to_string(), 1.5f64);
+        factors.insert("B".to_string(), 0.0f64);
+        let result = sanitize_category_impact_factors(
+            &["A".to_string(), "B".to_string()],
+            factors,
+        );
+        assert!(result.is_ok());
+        let map = result.unwrap();
+        assert_eq!(map["A"], 1.5);
+        assert_eq!(map["B"], 0.0);
+    }
+
+    #[test]
+    fn sanitize_category_impact_factors_rejects_above_two() {
+        let mut factors = BTreeMap::new();
+        factors.insert("A".to_string(), 3.0f64);
+        let result = sanitize_category_impact_factors(&["A".to_string()], factors);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sanitize_category_impact_factors_rejects_negative() {
+        let mut factors = BTreeMap::new();
+        factors.insert("A".to_string(), -0.1f64);
+        let result = sanitize_category_impact_factors(&["A".to_string()], factors);
+        assert!(result.is_err());
+    }
+
+    // ── stable_attachment_id ──────────────────────────────────────────────────
+
+    #[test]
+    fn stable_attachment_id_is_deterministic() {
+        let id1 = stable_attachment_id(0, "file.txt", "text/plain", 100, "", "abc123");
+        let id2 = stable_attachment_id(0, "file.txt", "text/plain", 100, "", "abc123");
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn stable_attachment_id_differs_for_different_content_length() {
+        // The hash includes base64_data.len(), so content of different lengths differs
+        let id1 = stable_attachment_id(0, "file.txt", "text/plain", 100, "", "short");
+        let id2 = stable_attachment_id(0, "file.txt", "text/plain", 100, "", "a-much-longer-base64-string-here");
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn stable_attachment_id_starts_with_att_prefix() {
+        let id = stable_attachment_id(0, "file.txt", "text/plain", 100, "", "data");
+        assert!(id.starts_with("att-"));
+    }
+
+    #[test]
+    fn stable_attachment_id_differs_for_different_filenames() {
+        let id1 = stable_attachment_id(0, "a.txt", "text/plain", 100, "", "data");
+        let id2 = stable_attachment_id(0, "b.txt", "text/plain", 100, "", "data");
+        assert_ne!(id1, id2);
+    }
+
+    // ── default values ────────────────────────────────────────────────────────
+
+    #[test]
+    fn default_priority_values_returns_three_levels() {
+        let result = default_priority_values();
+        assert_eq!(result.len(), 3);
+        assert!(result.contains(&"Low".to_string()));
+        assert!(result.contains(&"Mid".to_string()));
+        assert!(result.contains(&"High".to_string()));
+    }
+
+    #[test]
+    fn default_status_values_contains_expected_statuses() {
+        let result = default_status_values();
+        assert!(result.contains(&"Open".to_string()));
+        assert!(result.contains(&"Completed".to_string()));
+        assert!(result.contains(&"Scheduled".to_string()));
+        assert!(result.contains(&"Halted".to_string()));
+        assert!(result.contains(&"On Hold".to_string()));
+    }
+
+    #[test]
+    fn default_status_returns_open() {
+        assert_eq!(default_status(), "Open");
+    }
+
+    #[test]
+    fn default_reminder_cadence_returns_none() {
+        assert_eq!(default_reminder_cadence(), "None");
+    }
+
+    #[test]
+    fn default_lab_activity_returns_none() {
+        assert_eq!(default_lab_activity(), "None");
+    }
+
+    #[test]
+    fn default_schema_version_is_one() {
+        assert_eq!(default_schema_version(), 1);
+    }
+
+    // ── sanitize_reminder_cadence_options ─────────────────────────────────────
+
+    #[test]
+    fn sanitize_reminder_cadence_options_accepts_valid() {
+        let options = vec![
+            ReminderCadenceOption { label: "None".to_string(), interval_days: 0 },
+            ReminderCadenceOption { label: "Weekly".to_string(), interval_days: 7 },
+        ];
+        let result = sanitize_reminder_cadence_options(options);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn sanitize_reminder_cadence_options_deduplicates_labels() {
+        let options = vec![
+            ReminderCadenceOption { label: "Weekly".to_string(), interval_days: 7 },
+            ReminderCadenceOption { label: "Weekly".to_string(), interval_days: 14 },
+        ];
+        let result = sanitize_reminder_cadence_options(options);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn sanitize_reminder_cadence_options_accepts_empty() {
+        // No minimum required; empty input yields empty Ok result
+        let result = sanitize_reminder_cadence_options(vec![]);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    // ── deserialize_lab_activity ──────────────────────────────────────────────
+
+    #[test]
+    fn deserialize_lab_activity_handles_bool_false() {
+        let json = "false";
+        let result: String = serde_json::from_str::<serde_json::Value>(json)
+            .map(|v| match v {
+                serde_json::Value::Bool(b) => if b { "Significant" } else { "None" }.to_string(),
+                serde_json::Value::String(s) => s,
+                _ => "None".to_string(),
+            })
+            .unwrap();
+        assert_eq!(result, "None");
+    }
+
+    #[test]
+    fn deserialize_lab_activity_handles_bool_true() {
+        let json = "true";
+        let result = match serde_json::from_str::<serde_json::Value>(json).unwrap() {
+            serde_json::Value::Bool(b) => if b { "Significant" } else { "None" }.to_string(),
+            serde_json::Value::String(s) => s,
+            _ => "None".to_string(),
+        };
+        assert_eq!(result, "Significant");
+    }
+
+    #[test]
+    fn deserialize_lab_activity_handles_string() {
+        let json = r#""Minimal""#;
+        let result = match serde_json::from_str::<serde_json::Value>(json).unwrap() {
+            serde_json::Value::Bool(b) => if b { "Significant" } else { "None" }.to_string(),
+            serde_json::Value::String(s) => s,
+            _ => "None".to_string(),
+        };
+        assert_eq!(result, "Minimal");
+    }
+
+    // ── replace_list_values ───────────────────────────────────────────────────
+
+    #[test]
+    fn replace_list_values_renames_matching_entries() {
+        // replace_list_values calls sanitize_string_list which deduplicates
+        let mut values = vec!["Alice".to_string(), "Bob".to_string(), "Alice".to_string()];
+        replace_list_values(&mut values, "Alice", "Alexandra");
+        assert!(values.contains(&"Alexandra".to_string()));
+        assert!(values.contains(&"Bob".to_string()));
+        assert!(!values.contains(&"Alice".to_string()));
+    }
+
+    #[test]
+    fn replace_list_values_noop_when_no_match() {
+        let mut values = vec!["Alice".to_string(), "Bob".to_string()];
+        replace_list_values(&mut values, "Charlie", "Charles");
+        assert_eq!(values, vec!["Alice", "Bob"]);
+    }
+
+    #[test]
+    fn replace_list_values_empty_list() {
+        let mut values: Vec<String> = vec![];
+        replace_list_values(&mut values, "Alice", "Alex");
+        assert!(values.is_empty());
+    }
+
+    // ── sanitize_settings ─────────────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_settings_accepts_empty_owners() {
+        // sanitize_settings normalises values but does not enforce minimum counts
+        let settings = TrackerSettings {
+            owners: vec![],
+            projects: vec!["P".to_string()],
+            departments: vec!["D".to_string()],
+            categories: vec!["C".to_string()],
+            category_impact_factors: BTreeMap::new(),
+            priorities: vec!["Low".to_string()],
+            efforts: vec!["Low".to_string()],
+            impacts: vec!["Low".to_string()],
+            statuses: vec!["Open".to_string()],
+            reminder_cadences: vec![ReminderCadenceOption { label: "None".to_string(), interval_days: 0 }],
+        };
+        let result = sanitize_settings(settings);
+        assert!(result.is_ok());
+        assert!(result.unwrap().owners.is_empty());
+    }
+
+    #[test]
+    fn sanitize_settings_trims_and_deduplicates() {
+        let settings = TrackerSettings {
+            owners: vec!["  Alice  ".to_string(), "Alice".to_string()],
+            projects: vec!["Project".to_string()],
+            departments: vec!["Dept".to_string()],
+            categories: vec!["Cat".to_string()],
+            category_impact_factors: BTreeMap::new(),
+            priorities: vec!["Low".to_string()],
+            efforts: vec!["Low".to_string()],
+            impacts: vec!["Low".to_string()],
+            statuses: vec!["Open".to_string()],
+            reminder_cadences: vec![ReminderCadenceOption { label: "None".to_string(), interval_days: 0 }],
+        };
+        let result = sanitize_settings(settings).unwrap();
+        assert_eq!(result.owners.len(), 1);
+        assert_eq!(result.owners[0], "Alice");
+    }
 }

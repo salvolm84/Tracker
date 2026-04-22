@@ -120,6 +120,43 @@
   border-color: var(--jira-border-strong);
 }
 
+.module-switcher {
+  display: flex;
+  gap: 0.25rem;
+  background: var(--jira-hover-bg);
+  border-radius: 0.75rem;
+  padding: 0.25rem;
+  width: 100%;
+}
+
+.module-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--mantine-color-dimmed);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.module-tab:hover {
+  background: var(--jira-border);
+  color: var(--mantine-color-text);
+}
+
+.module-tab.active {
+  background: var(--mantine-color-body);
+  color: var(--mantine-color-text);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
 .page-nav {
   display: grid;
   gap: 0.24rem;
@@ -869,9 +906,6 @@
   border: 1px solid var(--jira-border);
 }
 
-.record-description-card {
-  padding: 0.1rem;
-}
 
 .record-description {
   color: var(--jira-text);
@@ -1253,6 +1287,11 @@
   .admin-reminder-edit {
     grid-template-columns: 1fr;
   }
+
+  .supplier-rating-row,
+  .supplier-rating-row.compact {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
 }
 
 /* ── Nav signal dot (overdue/stale indicator) ─────────────────── */
@@ -1305,6 +1344,49 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+/* ── Debug supplier rating rows ───────────────────────────────── */
+.supplier-rating-row {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) max-content;
+  gap: 0.85rem;
+  align-items: center;
+}
+
+.supplier-rating-row.compact {
+  grid-template-columns: minmax(11rem, 14rem) max-content;
+  gap: 0.65rem;
+}
+
+.supplier-rating-label {
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.half-star-rating {
+  display: inline-grid;
+  grid-template-columns: repeat(5, 1.25rem) 2.6rem;
+  align-items: center;
+  justify-content: start;
+  column-gap: 0.12rem;
+  width: max-content;
+  user-select: none;
+}
+
+.half-star-rating-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.half-star-rating-value {
+  min-width: 2.6rem;
+  padding-left: 0.25rem;
+  text-align: left;
 }
 
 /* ── Pinned record highlight ──────────────────────────────────── */
@@ -1373,4 +1455,13 @@
 .board-card-priority-none,
 .board-card:not([class*="board-card-priority-"]) {
   border-left-color: var(--jira-border) !important;
+}
+
+.board-card-dragging {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.board-column {
+  transition: outline 80ms ease;
 }

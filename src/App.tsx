@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useEffectEvent, useRef, useState } from 'react'
+import React, { startTransition, useEffect, useEffectEvent, useRef, useState } from 'react'
 import {
   ActionIcon,
   Alert,
@@ -18,6 +18,7 @@ import {
   SegmentedControl,
   SimpleGrid,
   Skeleton,
+  Slider,
   Stack,
   Text,
   TextInput,
@@ -37,6 +38,9 @@ import { DateInput } from '@mantine/dates'
 import { useForm } from '@mantine/form'
 import {
   IconAlertCircle,
+  IconAlertTriangle,
+  IconBug,
+  IconBulb,
   IconChartBar,
   IconChevronDown,
   IconChevronUp,
@@ -49,18 +53,23 @@ import {
   IconFileDescription,
   IconFileExport,
   IconHelp,
+  IconMessage,
   IconPaperclip,
   IconFolders,
   IconLayoutDashboard,
   IconLayoutKanban,
   IconListDetails,
   IconMoon,
+  IconPlus,
   IconPrinter,
+  IconSettings,
   IconStar,
   IconStarFilled,
+  IconStarHalfFilled,
   IconSun,
   IconTargetArrow,
   IconTemplate,
+  IconTool,
   IconTrash,
   IconUsersGroup,
   IconX,
@@ -72,21 +81,28 @@ import {
   appendActivityComment,
   defaultTrackerSettings,
   deleteActivityComment,
+  deleteDebugRecord,
   getActivityRecords,
   bootstrapForm,
   fallbackBootstrap,
   getAttachmentStorageStats,
   getDatabaseStats,
+  getDebugRecords,
+  getDebugSettings,
   listDatabaseBackups,
   quickUpdateActivity,
   readAttachmentData,
   readAttachmentsFromPaths,
+  readDebugAttachmentData,
   relabelTrackerSettings,
   replaceDatabaseRecords,
   restoreDatabaseBackup,
   submitActivity,
+  submitDebugRecord,
   updateActivity,
   updateActivityComment,
+  updateDebugRecord,
+  updateDebugSettings,
   updateTrackerSettings,
 } from './api'
 import {
@@ -109,6 +125,11 @@ import type {
   DatabaseBackup,
   DatabaseDocument,
   DatabaseStats,
+  DebugFormValues,
+  DebugRecord,
+  DebugSettings,
+  LessonLearnt,
+  SupplierRatingEntry,
   QuickUpdatePayload,
   RecordComment,
   RecordHistoryEntry,
@@ -121,7 +142,22 @@ import './App.css'
 
 dayjs.extend(isoWeek)
 
-type PageKey = 'overview' | 'form' | 'records' | 'board' | 'insights' | 'weekly' | 'admin'
+const LESSON_CATEGORIES: { value: string; color: string; icon: React.ElementType }[] = [
+  { value: 'Insight',       color: 'yellow', icon: IconBulb },
+  { value: 'Issue',         color: 'red',    icon: IconBug },
+  { value: 'Risk',          color: 'orange', icon: IconAlertTriangle },
+  { value: 'Process',       color: 'blue',   icon: IconSettings },
+  { value: 'Success',       color: 'green',  icon: IconCircleCheck },
+  { value: 'Tool',          color: 'violet', icon: IconTool },
+  { value: 'Communication', color: 'teal',   icon: IconMessage },
+]
+
+function lessonCategoryMeta(category: string) {
+  return LESSON_CATEGORIES.find((c) => c.value === category) ?? LESSON_CATEGORIES[0]
+}
+
+type PageKey = 'overview' | 'form' | 'records' | 'board' | 'insights' | 'weekly' | 'admin' | 'debug-list' | 'debug-form' | 'debug-insights' | 'debug-admin'
+type ActiveModule = 'activity' | 'debug'
 type WeeklyReportMode = 'week' | 'range'
 type WeeklyTemplate = 'bullets' | 'executive' | 'owner' | 'project'
 type HeatmapValueMode = 'count' | 'percent'
@@ -232,6 +268,7 @@ const initialValues: ActivityFormValues = {
   reminderCadence: defaultTrackerSettings.reminderCadences[0]?.label ?? null,
   categories: [],
   attachments: [],
+  labActivity: 'None',
 }
 
 const fallbackStats: DatabaseStats = {
@@ -270,6 +307,10 @@ const pageShortcutMap: Record<PageKey, string> = {
   insights: '5',
   weekly: '6',
   admin: '7',
+  'debug-list': '',
+  'debug-form': '',
+  'debug-insights': '',
+  'debug-admin': '',
 }
 
 const orderedPages: PageKey[] = [
@@ -1348,6 +1389,83 @@ function HeatmapPlot({
   )
 }
 
+const SUPPLIER_RATING_LABELS = [
+  'Electronics',
+  'Software',
+  'Characterization',
+  'Debug',
+  'Collaboration & Transparency',
+  'Sense of Urgency',
+]
+
+function defaultSupplierRating(): SupplierRatingEntry[] {
+  return SUPPLIER_RATING_LABELS.map((label) => ({ label, rating: 0 }))
+}
+
+function mergeSupplierRating(saved: SupplierRatingEntry[]): SupplierRatingEntry[] {
+  return SUPPLIER_RATING_LABELS.map((label) => ({
+    label,
+    rating: saved.find((e) => e.label === label)?.rating ?? 0,
+  }))
+}
+
+function HalfStarRating({
+  value,
+  onChange,
+  readOnly = false,
+}: {
+  value: number
+  onChange?: (v: number) => void
+  readOnly?: boolean
+}) {
+  const [hoverValue, setHoverValue] = useState<number | null>(null)
+  const display = hoverValue ?? value
+
+  return (
+    <div className="half-star-rating">
+      {[1, 2, 3, 4, 5].map((star) => {
+        const half = star - 0.5
+        const full = star
+        const filled = display >= full ? 'full' : display >= half ? 'half' : 'empty'
+
+        return (
+          <div
+            key={star}
+            className="half-star-rating-item"
+          >
+            {filled === 'full' ? (
+              <IconStarFilled size={18} style={{ color: '#fab005' }} />
+            ) : filled === 'half' ? (
+              <IconStarHalfFilled size={18} style={{ color: '#fab005' }} />
+            ) : (
+              <IconStar size={18} style={{ color: 'var(--mantine-color-gray-4)' }} />
+            )}
+            {!readOnly && (
+              <>
+                <div
+                  style={{ position: 'absolute', left: 0, top: 0, width: '50%', height: '100%', cursor: 'pointer' }}
+                  onMouseEnter={() => setHoverValue(half)}
+                  onMouseLeave={() => setHoverValue(null)}
+                  onClick={() => onChange?.(value === half ? 0 : half)}
+                />
+                <div
+                  style={{ position: 'absolute', right: 0, top: 0, width: '50%', height: '100%', cursor: 'pointer' }}
+                  onMouseEnter={() => setHoverValue(full)}
+                  onMouseLeave={() => setHoverValue(null)}
+                  onClick={() => onChange?.(value === full ? 0 : full)}
+                />
+              </>
+            )}
+          </div>
+        )
+      })}
+      <Text size="xs" c="dimmed" className="half-star-rating-value">
+        {value > 0 ? `${value}/5` : ''}
+      </Text>
+    </div>
+  )
+}
+
 function AdminTextListEditor({
   title,
   singularLabel,
@@ -1964,6 +2082,8 @@ function App() {
   const currentIsoWeekEnd = dayjs().endOf('isoWeek')
   const searchInputRef = useRef<HTMLInputElement>(null)
   const notifiedRecordIds = useRef<Set<string>>(new Set())
+  const dragCardRef = useRef<{ recordId: string; ghostEl: HTMLDivElement; grabOffsetX: number; grabOffsetY: number } | null>(null)
+  const boardRecordsRef = useRef<ActivityRecord[]>([])
   const [currentPage, setCurrentPage] = useState<PageKey>('overview')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false)
@@ -2015,6 +2135,30 @@ function App() {
   const [isSavingComment, setIsSavingComment] = useState(false)
   const [isRestoringBackupPath, setIsRestoringBackupPath] = useState<string | null>(null)
   const [isDeletingCommentId, setIsDeletingCommentId] = useState<string | null>(null)
+  const [activeModule, setActiveModule] = useState<ActiveModule>('activity')
+  const [debugRecords, setDebugRecords] = useState<DebugRecord[]>([])
+  const [debugSettings, setDebugSettings] = useState<DebugSettings>({
+    categories: ['HW', 'SW', 'System'],
+    outcomeOptions: ['Root cause found', 'Issue reproduced', 'Workaround identified', 'Fix identified', 'Workaround validated', 'Fix validated', 'Degraded performance'],
+  })
+  const [debugCategoriesDraft, setDebugCategoriesDraft] = useState(debugSettings.categories.join('\n'))
+  const [debugOutcomeDraft, setDebugOutcomeDraft] = useState(debugSettings.outcomeOptions.join('\n'))
+  const [isSavingDebugSettings, setIsSavingDebugSettings] = useState(false)
+  const [debugSettingsError, setDebugSettingsError] = useState<string | null>(null)
+  const [pendingNavPage, setPendingNavPage] = useState<PageKey | null>(null)
+  const [showUnsavedNavModal, setShowUnsavedNavModal] = useState(false)
+  const [editingLessonIdx, setEditingLessonIdx] = useState<number | null>(null)
+  const [lessonDraft, setLessonDraft] = useState<{ category: string; text: string; attachments: AttachmentPayload[] } | null>(null)
+  const [selectedDebugRecordId, setSelectedDebugRecordId] = useState<string | null>(null)
+  const [editingDebugRecordId, setEditingDebugRecordId] = useState<string | null>(null)
+  const [isLoadingDebugRecords, setIsLoadingDebugRecords] = useState(false)
+  const [isSavingDebug, setIsSavingDebug] = useState(false)
+  const [isDeletingDebugId, setIsDeletingDebugId] = useState<string | null>(null)
+  const [debugSearchTerm, setDebugSearchTerm] = useState('')
+  const [debugPreviewAttachmentKey, setDebugPreviewAttachmentKey] = useState<string | null>(null)
+  const [debugPreviewAttachmentDataByKey, setDebugPreviewAttachmentDataByKey] =
+    useState<Record<string, AttachmentData>>({})
+  const [debugLoadingAttachmentKey, setDebugLoadingAttachmentKey] = useState<string | null>(null)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const [draggingRecordId, setDraggingRecordId] = useState<string | null>(null)
   const [isFiltersCollapsed, setIsFiltersCollapsed] = useState(true)
@@ -2154,6 +2298,41 @@ function App() {
     factor: bootstrapData.categoryImpactFactors[category] ?? 1,
   }))
 
+  const debugForm = useForm<DebugFormValues>({
+    initialValues: {
+      projects: [],
+      startDate: null,
+      endDate: null,
+      category: [],
+      description: '',
+      attachments: [],
+      supplier: '',
+      component: '',
+      departments: [],
+      supplierRating: defaultSupplierRating(),
+      outcome: [],
+      occurrencePhase: '',
+      demerit: 0,
+      linkedActivityIds: [],
+      lessonsLearnt: [],
+    },
+    validate: {
+      projects: (value) => (value.length > 0 ? null : 'Select at least one project'),
+      startDate: (value) => (value ? null : 'Choose a start date'),
+      endDate: (value, values) => {
+        if (!value) return 'Choose an end date'
+        if (values.startDate && dayjs(value).isBefore(dayjs(values.startDate), 'day'))
+          return 'End date cannot be earlier than the start date'
+        return null
+      },
+      category: (value) => (value.length > 0 ? null : 'Select at least one category'),
+      description: (value) =>
+        value.trim().length >= 10 ? null : 'Add a description with at least 10 characters',
+      departments: (value) => (value.length > 0 ? null : 'Select at least one department'),
+      attachments: (value) => (value.length <= 10 ? null : 'Attach up to 10 files'),
+    },
+  })
+
   async function appendAttachments(nextAttachments: AttachmentPayload[]) {
     if (nextAttachments.length === 0) {
       return
@@ -2239,6 +2418,7 @@ function App() {
       reminderCadence: record.reminderCadence,
       categories: [...record.categories],
       attachments: [...record.attachments],
+      labActivity: record.labActivity || 'None',
     })
     setEditingRecordId(record.id)
     setEditingRecordVersion(recordConcurrencyToken(record))
@@ -2273,6 +2453,7 @@ function App() {
       reminderCadence: record.reminderCadence,
       categories: [...record.categories],
       attachments: [],
+      labActivity: record.labActivity || 'None',
     })
     setEditingRecordId(null)
     setEditingRecordVersion(null)
@@ -2424,6 +2605,7 @@ function App() {
   const filteredRecords = records.filter((record) =>
     matchesSharedFilters(record, sharedFilters),
   )
+  boardRecordsRef.current = filteredRecords
   const recordsListDisplay = [
     ...filteredRecords.filter((r) => pinnedRecordIds.has(r.id)),
     ...filteredRecords.filter((r) => !pinnedRecordIds.has(r.id)),
@@ -2811,6 +2993,75 @@ function App() {
   }, [currentPage])
 
   useEffect(() => {
+    if (currentPage !== 'board') {
+      return
+    }
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const drag = dragCardRef.current
+      if (!drag) return
+      drag.ghostEl.style.left = `${e.clientX - drag.grabOffsetX}px`
+      drag.ghostEl.style.top = `${e.clientY - drag.grabOffsetY}px`
+
+      // Highlight the column under the cursor
+      document.querySelectorAll('[data-column-status]').forEach((el) => {
+        ;(el as HTMLElement).style.outline = ''
+      })
+      drag.ghostEl.style.display = 'none'
+      const target = document.elementFromPoint(e.clientX, e.clientY)
+      drag.ghostEl.style.display = ''
+      const colEl = target?.closest('[data-column-status]') as HTMLElement | null
+      if (colEl) {
+        colEl.style.outline = '2px solid var(--mantine-color-blue-5)'
+      }
+    }
+
+    const handleMouseUp = (e: MouseEvent) => {
+      const drag = dragCardRef.current
+      if (!drag) return
+
+      // Cleanup ghost and highlight
+      drag.ghostEl.remove()
+      dragCardRef.current = null
+      setDraggingRecordId(null)
+      document.querySelectorAll('[data-column-status]').forEach((el) => {
+        ;(el as HTMLElement).style.outline = ''
+      })
+
+      // Find column under cursor
+      const target = document.elementFromPoint(e.clientX, e.clientY)
+      const colEl = target?.closest('[data-column-status]') as HTMLElement | null
+      if (!colEl) return
+      const newStatus = colEl.dataset.columnStatus
+      if (!newStatus) return
+
+      const record = boardRecordsRef.current.find((r) => r.id === drag.recordId)
+      if (!record || record.status === newStatus) return
+
+      void handleQuickUpdateRecord(
+        record,
+        { status: newStatus as ActivityStatus },
+        `Moved "${record.title}" to ${newStatus}.`,
+      )
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      // Cleanup any dangling ghost on page change
+      if (dragCardRef.current) {
+        dragCardRef.current.ghostEl.remove()
+        dragCardRef.current = null
+      }
+      document.querySelectorAll('[data-column-status]').forEach((el) => {
+        ;(el as HTMLElement).style.outline = ''
+      })
+    }
+  }, [currentPage])
+
+  useEffect(() => {
     setCommentMessage('')
     setCommentAttachments([])
     setCommentError(null)
@@ -3113,6 +3364,148 @@ function App() {
     }
   }
 
+  async function refreshDebugRecords(options?: { silent?: boolean }) {
+    const silent = options?.silent ?? false
+    if (!silent) setIsLoadingDebugRecords(true)
+    try {
+      const next = await getDebugRecords()
+      startTransition(() => {
+        setDebugRecords(next)
+        setSelectedDebugRecordId((current) => {
+          if (next.length === 0) return null
+          if (current && next.some((r) => r.id === current)) return current
+          return next[0]?.id ?? null
+        })
+      })
+    } catch {
+      // silently ignore debug load errors
+    } finally {
+      if (!silent) setIsLoadingDebugRecords(false)
+    }
+  }
+
+  async function handleSubmitDebug(values: DebugFormValues) {
+    setIsSavingDebug(true)
+    try {
+      const payload = {
+        projects: values.projects,
+        startDate: dayjs(values.startDate).format('YYYY-MM-DD'),
+        endDate: dayjs(values.endDate).format('YYYY-MM-DD'),
+        category: values.category,
+        description: values.description,
+        attachments: values.attachments,
+        supplier: values.supplier,
+        component: values.component,
+        departments: values.departments,
+        supplierRating: values.supplierRating,
+        outcome: values.outcome,
+        occurrencePhase: values.occurrencePhase,
+        demerit: values.demerit,
+        linkedActivityIds: values.linkedActivityIds,
+        lessonsLearnt: values.lessonsLearnt,
+        expectedLastModifiedAt: editingDebugRecordId
+          ? (debugRecords.find((r) => r.id === editingDebugRecordId)?.lastModifiedAt ?? null)
+          : null,
+      }
+
+      if (editingDebugRecordId) {
+        await updateDebugRecord(editingDebugRecordId, payload)
+        notifications.show({ color: 'teal', title: 'Entry updated', message: 'Key debug entry saved.', autoClose: 3000 })
+      } else {
+        await submitDebugRecord(payload)
+        notifications.show({ color: 'teal', title: 'Entry saved', message: 'Key debug entry added to the repository.', autoClose: 3000 })
+      }
+
+      debugForm.reset()
+      setEditingDebugRecordId(null)
+      setEditingLessonIdx(null)
+      setLessonDraft(null)
+      await refreshDebugRecords({ silent: true })
+      setCurrentPage('debug-list')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save debug entry'
+      notifications.show({ color: 'red', title: 'Save failed', message, autoClose: 5000 })
+    } finally {
+      setIsSavingDebug(false)
+    }
+  }
+
+  async function handleDeleteDebug(record: DebugRecord) {
+    if (!confirm(`Delete debug entry? This cannot be undone.`)) return
+    setIsDeletingDebugId(record.id)
+    try {
+      await deleteDebugRecord(record.id, record.lastModifiedAt || record.submittedAt)
+      notifications.show({ color: 'teal', title: 'Entry deleted', message: 'Debug entry removed.', autoClose: 3000 })
+      await refreshDebugRecords({ silent: true })
+      setSelectedDebugRecordId(null)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to delete debug entry'
+      notifications.show({ color: 'red', title: 'Delete failed', message, autoClose: 5000 })
+    } finally {
+      setIsDeletingDebugId(null)
+    }
+  }
+
+  function startEditingDebugRecord(record: DebugRecord) {
+    debugForm.setValues({
+      projects: record.projects,
+      startDate: record.startDate ? new Date(record.startDate) : null,
+      endDate: record.endDate ? new Date(record.endDate) : null,
+      category: record.category,
+      description: record.description,
+      attachments: record.attachments,
+      supplier: record.supplier,
+      component: record.component,
+      departments: record.departments,
+      supplierRating: mergeSupplierRating(record.supplierRating ?? []),
+      outcome: record.outcome,
+      occurrencePhase: record.occurrencePhase ?? '',
+      demerit: record.demerit ?? 0,
+      linkedActivityIds: record.linkedActivityIds ?? [],
+      lessonsLearnt: record.lessonsLearnt ?? [],
+    })
+    setEditingLessonIdx(null)
+    setLessonDraft(null)
+    setEditingDebugRecordId(record.id)
+    setCurrentPage('debug-form')
+  }
+
+  async function handleSaveDebugSettings() {
+    setIsSavingDebugSettings(true)
+    setDebugSettingsError(null)
+    try {
+      const parseLines = (text: string) =>
+        text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
+      const payload: DebugSettings = {
+        categories: parseLines(debugCategoriesDraft),
+        outcomeOptions: parseLines(debugOutcomeDraft),
+      }
+      await updateDebugSettings(payload)
+      setDebugSettings(payload)
+      notifications.show({ color: 'teal', title: 'Settings saved', message: 'Debug settings updated.', autoClose: 3000 })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save debug settings'
+      setDebugSettingsError(message)
+    } finally {
+      setIsSavingDebugSettings(false)
+    }
+  }
+
+  async function handleDebugPreviewAttachment(record: DebugRecord, attachment: AttachmentPayload) {
+    const key = `${record.id}:${attachment.id}`
+    setDebugPreviewAttachmentKey(key)
+    if (debugPreviewAttachmentDataByKey[key]) return
+    setDebugLoadingAttachmentKey(key)
+    try {
+      const data = await readDebugAttachmentData(record.id, attachment.id)
+      setDebugPreviewAttachmentDataByKey((prev) => ({ ...prev, [key]: data }))
+    } catch {
+      // ignore
+    } finally {
+      setDebugLoadingAttachmentKey(null)
+    }
+  }
+
   async function refreshBackups(options?: { silent?: boolean }) {
     const silent = options?.silent ?? false
 
@@ -3176,13 +3569,15 @@ function App() {
           getActivityRecords(),
           listDatabaseBackups(),
           getAttachmentStorageStats(),
+          getDebugRecords(),
+          getDebugSettings(),
         ])
 
         if (!active) {
           return
         }
 
-        const [payloadResult, statsResult, recordsResult, backupsResult, attachmentStatsResult] =
+        const [payloadResult, statsResult, recordsResult, backupsResult, attachmentStatsResult, debugRecordsResult, debugSettingsResult] =
           results
         const payload =
           payloadResult.status === 'fulfilled' ? payloadResult.value : fallbackBootstrap
@@ -3196,6 +3591,10 @@ function App() {
           attachmentStatsResult.status === 'fulfilled'
             ? attachmentStatsResult.value
             : { fileCount: 0, totalSizeBytes: 0 }
+        const loadedDebugRecords =
+          debugRecordsResult.status === 'fulfilled' ? debugRecordsResult.value : []
+        const loadedDebugSettings =
+          debugSettingsResult.status === 'fulfilled' ? debugSettingsResult.value : null
         const nextErrors: RefreshErrorMap = {
           bootstrap:
             payloadResult.status === 'rejected'
@@ -3218,6 +3617,13 @@ function App() {
           setBootstrapData(payload)
           setStats(dbStats)
           setRecords(loadedRecords)
+          setDebugRecords(loadedDebugRecords)
+          setSelectedDebugRecordId(loadedDebugRecords[0]?.id ?? null)
+          if (loadedDebugSettings) {
+            setDebugSettings(loadedDebugSettings)
+            setDebugCategoriesDraft(loadedDebugSettings.categories.join('\n'))
+            setDebugOutcomeDraft(loadedDebugSettings.outcomeOptions.join('\n'))
+          }
           setDatabaseBackups(loadedBackups)
           setAttachmentStorageStats(loadedAttachmentStats)
           setRefreshErrors(nextErrors)
@@ -3330,6 +3736,7 @@ function App() {
         reminderCadence: values.reminderCadence ?? 'None',
         categories: values.categories,
         attachments: values.attachments,
+        labActivity: values.labActivity,
         expectedLastModifiedAt: editingRecordId ? editingRecordVersion : undefined,
       }
       const result = editingRecordId
@@ -3952,6 +4359,40 @@ function App() {
     await persistSettingsChange(payload)
   }
 
+  function hasActivityAdminUnsavedChanges(): boolean {
+    const parseLines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (parseLines(ownersDraft).join('|') !== bootstrapData.owners.join('|')) return true
+    if (parseLines(projectsDraft).join('|') !== bootstrapData.projects.join('|')) return true
+    if (parseLines(departmentsDraft).join('|') !== bootstrapData.departments.join('|')) return true
+    if (parseLines(categoriesDraft).join('|') !== bootstrapData.categories.join('|')) return true
+    if (parseLines(prioritiesDraft).join('|') !== bootstrapData.priorities.join('|')) return true
+    if (parseLines(effortsDraft).join('|') !== bootstrapData.efforts.join('|')) return true
+    if (parseLines(impactsDraft).join('|') !== bootstrapData.impacts.join('|')) return true
+    if (parseLines(statusesDraft).join('|') !== bootstrapData.statuses.join('|')) return true
+    return false
+  }
+
+  function hasDebugAdminUnsavedChanges(): boolean {
+    const parseLines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (parseLines(debugCategoriesDraft).join('|') !== debugSettings.categories.join('|')) return true
+    if (parseLines(debugOutcomeDraft).join('|') !== debugSettings.outcomeOptions.join('|')) return true
+    return false
+  }
+
+  function navigateToPage(page: PageKey) {
+    if (currentPage === 'admin' && hasActivityAdminUnsavedChanges()) {
+      setPendingNavPage(page)
+      setShowUnsavedNavModal(true)
+      return
+    }
+    if (currentPage === 'debug-admin' && hasDebugAdminUnsavedChanges()) {
+      setPendingNavPage(page)
+      setShowUnsavedNavModal(true)
+      return
+    }
+    setCurrentPage(page)
+  }
+
   function downloadTextFile(fileName: string, content: string, mimeType: string) {
     const blob = new Blob([content], { type: mimeType })
     const url = URL.createObjectURL(blob)
@@ -4467,16 +4908,13 @@ function App() {
             <div className="sidebar-topbar">
               {!isSidebarCollapsed ? (
                 <div>
-                  <Text className="eyebrow">Tracker</Text>
+                  <Text className="eyebrow">{activeModule === 'activity' ? 'Activity Tracker' : 'Key Debug'}</Text>
                   <Title order={1} className="hero-title">
-                    Shared issue tracking for team operations.
+                    {activeModule === 'activity' ? 'Shared issue tracking for team operations.' : 'Significant debug result repository.'}
                   </Title>
-                  <Text mt="md" className="hero-copy">
-                    Work items, reports, boards, and administration in one compact desktop view.
-                  </Text>
                 </div>
               ) : (
-                <Text className="eyebrow">TRK</Text>
+                <Text className="eyebrow">{activeModule === 'activity' ? 'ACT' : 'DBG'}</Text>
               )}
 
               <button
@@ -4489,12 +4927,32 @@ function App() {
               </button>
             </div>
 
+            <div className="module-switcher">
+              <button
+                type="button"
+                className={`module-tab ${activeModule === 'activity' ? 'active' : ''}`}
+                onClick={() => { navigateToPage('overview'); setActiveModule('activity') }}
+              >
+                <IconTargetArrow size={14} />
+                {!isSidebarCollapsed && <span>Activity</span>}
+              </button>
+              <button
+                type="button"
+                className={`module-tab ${activeModule === 'debug' ? 'active' : ''}`}
+                onClick={() => { navigateToPage('debug-list'); setActiveModule('debug') }}
+              >
+                <IconBug size={14} />
+                {!isSidebarCollapsed && <span>Key Debug</span>}
+              </button>
+            </div>
+
+            {activeModule === 'activity' ? (
             <div className="page-nav">
               <Tooltip label="Overview — Workspace summary" position="right" disabled={!isSidebarCollapsed}>
                 <button
                   type="button"
                   className={`page-link ${currentPage === 'overview' ? 'active' : ''}`}
-                  onClick={() => setCurrentPage('overview')}
+                  onClick={() => navigateToPage('overview')}
                 >
                   <span className="page-link-icon">
                     <IconLayoutDashboard size={18} />
@@ -4511,7 +4969,7 @@ function App() {
                 <button
                   type="button"
                   className={`page-link ${currentPage === 'form' ? 'active' : ''}`}
-                  onClick={() => setCurrentPage('form')}
+                  onClick={() => navigateToPage('form')}
                 >
                   <span className="page-link-icon">
                     <IconClipboardText size={18} />
@@ -4528,7 +4986,7 @@ function App() {
                 <button
                   type="button"
                   className={`page-link ${currentPage === 'records' ? 'active' : ''}`}
-                  onClick={() => setCurrentPage('records')}
+                  onClick={() => navigateToPage('records')}
                 >
                   <span className="page-link-icon" style={{ position: 'relative' }}>
                     <IconListDetails size={18} />
@@ -4554,7 +5012,7 @@ function App() {
                 <button
                   type="button"
                   className={`page-link ${currentPage === 'board' ? 'active' : ''}`}
-                  onClick={() => setCurrentPage('board')}
+                  onClick={() => navigateToPage('board')}
                 >
                   <span className="page-link-icon">
                     <IconLayoutKanban size={18} />
@@ -4571,7 +5029,7 @@ function App() {
                 <button
                   type="button"
                   className={`page-link ${currentPage === 'insights' ? 'active' : ''}`}
-                  onClick={() => setCurrentPage('insights')}
+                  onClick={() => navigateToPage('insights')}
                 >
                   <span className="page-link-icon">
                     <IconChartBar size={18} />
@@ -4588,7 +5046,7 @@ function App() {
                 <button
                   type="button"
                   className={`page-link ${currentPage === 'weekly' ? 'active' : ''}`}
-                  onClick={() => setCurrentPage('weekly')}
+                  onClick={() => navigateToPage('weekly')}
                 >
                   <span className="page-link-icon">
                     <IconClipboardText size={18} />
@@ -4618,6 +5076,61 @@ function App() {
                 </button>
               </Tooltip>
             </div>
+            ) : (
+            <div className="page-nav">
+              <Tooltip label="New Entry — Add debug record" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'debug-form' ? 'active' : ''}`}
+                  onClick={() => { setEditingDebugRecordId(null); debugForm.reset(); setCurrentPage('debug-form') }}
+                >
+                  <span className="page-link-icon"><IconClipboardText size={18} /></span>
+                  <span><strong>New Entry</strong><small>Add debug record</small></span>
+                </button>
+              </Tooltip>
+
+              <Tooltip label="Entries — Browse debug repo" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'debug-list' ? 'active' : ''}`}
+                  onClick={() => navigateToPage('debug-list')}
+                >
+                  <span className="page-link-icon"><IconListDetails size={18} /></span>
+                  <span>
+                    <strong>Entries</strong>
+                    <small>Browse debug repo</small>
+                  </span>
+                  {debugRecords.length > 0 && !isSidebarCollapsed && (
+                    <Badge size="xs" variant="light" color="gray" radius="xl" className="page-link-shortcut">
+                      {debugRecords.length}
+                    </Badge>
+                  )}
+                </button>
+              </Tooltip>
+
+              <Tooltip label="Insights — Debug analytics" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'debug-insights' ? 'active' : ''}`}
+                  onClick={() => navigateToPage('debug-insights')}
+                >
+                  <span className="page-link-icon"><IconChartBar size={18} /></span>
+                  <span><strong>Insights</strong><small>Debug analytics</small></span>
+                </button>
+              </Tooltip>
+
+              <Tooltip label="Admin — Debug settings" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'debug-admin' ? 'active' : ''}`}
+                  onClick={() => setCurrentPage('debug-admin')}
+                >
+                  <span className="page-link-icon"><IconFolders size={18} /></span>
+                  <span><strong>Admin</strong><small>Debug settings</small></span>
+                </button>
+              </Tooltip>
+            </div>
+            )}
 
             {!isSidebarCollapsed ? (
               <>
@@ -4901,8 +5414,38 @@ function App() {
           </Stack>
         </Paper>
 
+        <Modal
+          opened={showUnsavedNavModal}
+          onClose={() => setShowUnsavedNavModal(false)}
+          title="Unsaved changes"
+          radius="lg"
+          size="sm"
+        >
+          <Stack gap="md">
+            <Text size="sm">You have unsaved changes on this admin page. Leave without saving?</Text>
+            <Group justify="flex-end" gap="sm">
+              <Button variant="default" radius="xl" onClick={() => setShowUnsavedNavModal(false)}>
+                Stay
+              </Button>
+              <Button
+                color="red"
+                radius="xl"
+                onClick={() => {
+                  setShowUnsavedNavModal(false)
+                  if (pendingNavPage) {
+                    setCurrentPage(pendingNavPage)
+                    setPendingNavPage(null)
+                  }
+                }}
+              >
+                Leave anyway
+              </Button>
+            </Group>
+          </Stack>
+        </Modal>
+
         <Paper radius="xl" p="xl" className="content-panel">
-          {currentPage !== 'form' && currentPage !== 'admin' ? (
+          {currentPage !== 'form' && currentPage !== 'admin' && currentPage !== 'debug-form' && currentPage !== 'debug-list' && currentPage !== 'debug-insights' && currentPage !== 'debug-admin' ? (
             <Card radius="xl" padding="lg" className="surface-card common-filter-card">
               <Stack gap="md">
                 <Group justify="space-between" align="flex-start">
@@ -5495,6 +6038,13 @@ function App() {
                   hidePickedOptions
                   required
                   {...form.getInputProps('categories')}
+                />
+
+                <Select
+                  label="Lab Activity"
+                  data={['None', 'Minimal', 'Significant']}
+                  allowDeselect={false}
+                  {...form.getInputProps('labActivity')}
                 />
 
                 <div className="form-section-label">
@@ -6732,26 +7282,7 @@ function App() {
                     radius="xl"
                     padding="lg"
                     className="surface-card board-column"
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => {
-                      event.preventDefault()
-                      if (!draggingRecordId) {
-                        return
-                      }
-
-                      const record = records.find((entry) => entry.id === draggingRecordId)
-                      if (!record || record.status === column.status) {
-                        setDraggingRecordId(null)
-                        return
-                      }
-
-                      void handleQuickUpdateRecord(
-                        record,
-                        { status: column.status },
-                        `Moved "${record.title}" to ${column.status}.`,
-                      )
-                      setDraggingRecordId(null)
-                    }}
+                    data-column-status={column.status}
                   >
                     <Stack gap="md">
                       <Group justify="space-between" align="center">
@@ -6771,7 +7302,7 @@ function App() {
                       {column.records.length === 0 ? (
                         <div className="board-empty">
                           <Text size="sm" c="dimmed">
-                            Drop cards here to move them to {column.status}.
+                            Drag cards here to move them to {column.status}.
                           </Text>
                         </div>
                       ) : (
@@ -6780,11 +7311,33 @@ function App() {
                             <button
                               type="button"
                               key={record.id}
-                              className={`board-card board-card-priority-${record.priority.toLowerCase()}`}
-                              draggable
-                              onDragStart={() => setDraggingRecordId(record.id)}
-                              onDragEnd={() => setDraggingRecordId(null)}
+                              className={`board-card board-card-priority-${record.priority.toLowerCase()}${draggingRecordId === record.id ? ' board-card-dragging' : ''}`}
+                              onMouseDown={(e) => {
+                                if (e.button !== 0) return
+                                e.preventDefault()
+                                const cardEl = e.currentTarget as HTMLElement
+                                const rect = cardEl.getBoundingClientRect()
+                                const grabOffsetX = e.clientX - rect.left
+                                const grabOffsetY = e.clientY - rect.top
+                                const ghost = cardEl.cloneNode(true) as HTMLDivElement
+                                ghost.style.cssText = [
+                                  'position:fixed',
+                                  'pointer-events:none',
+                                  'z-index:9999',
+                                  'opacity:0.92',
+                                  `left:${rect.left}px`,
+                                  `top:${rect.top}px`,
+                                  `width:${rect.width}px`,
+                                  'box-shadow:0 12px 32px rgba(0,0,0,0.28)',
+                                  'transform:rotate(1.5deg) scale(1.03)',
+                                  'transition:none',
+                                ].join(';')
+                                document.body.appendChild(ghost)
+                                dragCardRef.current = { recordId: record.id, ghostEl: ghost, grabOffsetX, grabOffsetY }
+                                setDraggingRecordId(record.id)
+                              }}
                               onClick={() => {
+                                if (draggingRecordId) return
                                 setSelectedRecordId(record.id)
                                 setCurrentPage('records')
                               }}
@@ -7135,6 +7688,976 @@ function App() {
                   </Text>
                 </Stack>
               </Card>
+            </Stack>
+          ) : currentPage === 'debug-form' ? (
+            <Stack gap="lg">
+              <div className="section-header">
+                <div>
+                  <Text className="eyebrow">Key Debug</Text>
+                  <Title order={2} className="form-title">
+                    {editingDebugRecordId ? 'Edit debug entry' : 'New debug entry'}
+                  </Title>
+                  <Text className="form-copy">
+                    Record a significant debug result for future reference. All entries are stored in the shared database.
+                  </Text>
+                </div>
+                {editingDebugRecordId ? (
+                  <Button variant="default" radius="xl" onClick={() => { setEditingDebugRecordId(null); debugForm.reset(); setCurrentPage('debug-list') }}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+
+              <form onSubmit={debugForm.onSubmit((values) => void handleSubmitDebug(values))}>
+                <Stack gap="md">
+                  <Card radius="xl" padding="lg" className="surface-card">
+                    <Stack gap="md">
+                      <Text className="form-section-eyebrow">Identification</Text>
+                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                        <MultiSelect
+                          label="Projects"
+                          placeholder="Select projects"
+                          data={bootstrapData.projects}
+                          {...debugForm.getInputProps('projects')}
+                          radius="md"
+                          searchable
+                          clearable
+                        />
+                        <MultiSelect
+                          label="Departments"
+                          placeholder="Select departments"
+                          data={bootstrapData.departments}
+                          {...debugForm.getInputProps('departments')}
+                          radius="md"
+                          searchable
+                          clearable
+                        />
+                      </SimpleGrid>
+                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                        <TextInput
+                          label="Supplier"
+                          placeholder="e.g. Texas Instruments"
+                          {...debugForm.getInputProps('supplier')}
+                          radius="md"
+                        />
+                        <TextInput
+                          label="Component"
+                          placeholder="e.g. TPS62840"
+                          {...debugForm.getInputProps('component')}
+                          radius="md"
+                        />
+                      </SimpleGrid>
+                    </Stack>
+                  </Card>
+
+                  <Card radius="xl" padding="lg" className="surface-card">
+                    <Stack gap="md">
+                      <Text className="form-section-eyebrow">Classification</Text>
+                      <MultiSelect
+                        label="Category"
+                        placeholder="Select categories"
+                        data={debugSettings.categories}
+                        {...debugForm.getInputProps('category')}
+                        radius="md"
+                      />
+                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                        <DateInput
+                          label="Start date"
+                          placeholder="Pick a date"
+                          {...debugForm.getInputProps('startDate')}
+                          radius="md"
+                          clearable
+                        />
+                        <DateInput
+                          label="End date"
+                          placeholder="Pick a date"
+                          {...debugForm.getInputProps('endDate')}
+                          radius="md"
+                          clearable
+                        />
+                      </SimpleGrid>
+                      <MultiSelect
+                        label="Outcome"
+                        placeholder="Select all outcomes that apply"
+                        data={debugSettings.outcomeOptions}
+                        {...debugForm.getInputProps('outcome')}
+                        radius="md"
+                        searchable
+                        clearable
+                      />
+                      <Select
+                        label="Occurrence Phase"
+                        placeholder="Select phase"
+                        data={['Development', 'Qualification', 'Post-SOP']}
+                        {...debugForm.getInputProps('occurrencePhase')}
+                        radius="md"
+                        clearable
+                      />
+                      <div>
+                        <InputLabel mb={6}>Demerit</InputLabel>
+                        <Group gap="md" align="center">
+                          <Slider
+                            style={{ flex: 1 }}
+                            min={0}
+                            max={100}
+                            step={10}
+                            marks={[
+                              { value: 0, label: '0' },
+                              { value: 50, label: '50' },
+                              { value: 100, label: '100' },
+                            ]}
+                            {...debugForm.getInputProps('demerit')}
+                          />
+                          <Text size="sm" fw={600} w={32} ta="right">
+                            {debugForm.values.demerit}
+                          </Text>
+                        </Group>
+                      </div>
+                      <div>
+                        <InputLabel mb={6}>Supplier capability rating</InputLabel>
+                        <Stack gap={8}>
+                          {debugForm.values.supplierRating.map((entry, idx) => (
+                            <div className="supplier-rating-row" key={entry.label}>
+                              <Text size="sm" className="supplier-rating-label">
+                                {entry.label}
+                              </Text>
+                              <HalfStarRating
+                                value={entry.rating}
+                                onChange={(v) => {
+                                  const next = [...debugForm.values.supplierRating]
+                                  next[idx] = { ...next[idx], rating: v }
+                                  debugForm.setFieldValue('supplierRating', next)
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </Stack>
+                      </div>
+                    </Stack>
+                  </Card>
+
+                  <Card radius="xl" padding="lg" className="surface-card">
+                    <Stack gap="md">
+                      <Text className="form-section-eyebrow">Details</Text>
+                      <Textarea
+                        label="Description"
+                        placeholder="Describe the debug findings, root cause, and resolution..."
+                        autosize
+                        minRows={4}
+                        {...debugForm.getInputProps('description')}
+                        radius="md"
+                      />
+                    </Stack>
+                  </Card>
+
+                  <Card radius="xl" padding="lg" className="surface-card">
+                    <Stack gap="md">
+                      <Text className="form-section-eyebrow">Linked Activity Records</Text>
+                      <MultiSelect
+                        label="Activity records"
+                        placeholder="Search and select activity records to link"
+                        data={records.map((r) => ({ value: r.id, label: `${r.id.slice(0, 8).toUpperCase()} — ${r.title}` }))}
+                        {...debugForm.getInputProps('linkedActivityIds')}
+                        radius="md"
+                        searchable
+                        clearable
+                      />
+                      {debugForm.values.linkedActivityIds.length > 0 ? (
+                        <Stack gap="xs">
+                          {debugForm.values.linkedActivityIds.map((id) => {
+                            const rec = records.find((r) => r.id === id)
+                            return rec ? (
+                              <Group key={id} gap="xs" wrap="nowrap">
+                                <Badge size="xs" variant="outline" radius="xl">{id.slice(0, 8).toUpperCase()}</Badge>
+                                <Text size="sm" truncate>{rec.title}</Text>
+                              </Group>
+                            ) : null
+                          })}
+                        </Stack>
+                      ) : null}
+                    </Stack>
+                  </Card>
+
+                  <Card radius="xl" padding="lg" className="surface-card">
+                    <Stack gap="md">
+                      <Text className="form-section-eyebrow">Attachments</Text>
+                      <div
+                        className="attachment-dropzone"
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={async (e) => {
+                          e.preventDefault()
+                          const files = Array.from(e.dataTransfer.files)
+                          if (files.length === 0) return
+                          const newAttachments = await Promise.all(files.map(fileToAttachment))
+                          const result = mergeAttachments(debugForm.values.attachments, newAttachments, 'record')
+                          if (!result.error) debugForm.setFieldValue('attachments', result.attachments)
+                        }}
+                      >
+                        <Text size="sm" c="dimmed">Drop files here or</Text>
+                        <Button
+                          variant="light"
+                          size="xs"
+                          radius="xl"
+                          component="label"
+                        >
+                          Browse
+                          <input
+                            type="file"
+                            multiple
+                            hidden
+                            onChange={async (e) => {
+                              if (!e.target.files) return
+                              const files = Array.from(e.target.files)
+                              const newAttachments = await Promise.all(files.map(fileToAttachment))
+                              const result = mergeAttachments(debugForm.values.attachments, newAttachments, 'record')
+                              if (!result.error) debugForm.setFieldValue('attachments', result.attachments)
+                            }}
+                          />
+                        </Button>
+                      </div>
+                      {debugForm.values.attachments.length > 0 ? (
+                        <Stack gap="xs">
+                          {debugForm.values.attachments.map((attachment) => (
+                            <Group key={attachment.id} justify="space-between" align="center">
+                              <Group gap="xs">
+                                {attachmentIcon(attachment)}
+                                <Text size="sm">{attachment.fileName}</Text>
+                                <Text size="xs" c="dimmed">
+                                  {(attachment.sizeBytes / 1024).toFixed(0)} KB
+                                </Text>
+                              </Group>
+                              <ActionIcon
+                                size="sm"
+                                color="red"
+                                variant="light"
+                                radius="xl"
+                                onClick={() =>
+                                  debugForm.setFieldValue(
+                                    'attachments',
+                                    debugForm.values.attachments.filter((a) => a.id !== attachment.id),
+                                  )
+                                }
+                              >
+                                <IconX size={12} />
+                              </ActionIcon>
+                            </Group>
+                          ))}
+                        </Stack>
+                      ) : null}
+                      {debugForm.errors.attachments ? (
+                        <Text size="sm" c="red">{debugForm.errors.attachments}</Text>
+                      ) : null}
+                    </Stack>
+                  </Card>
+
+                  <Card radius="xl" padding="lg" className="surface-card">
+                    <Stack gap="md">
+                      <Group justify="space-between" align="center">
+                        <Text className="form-section-eyebrow">Lessons Learnt</Text>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="light"
+                          radius="xl"
+                          leftSection={<IconPlus size={13} />}
+                          disabled={editingLessonIdx !== null}
+                          onClick={() => {
+                            setEditingLessonIdx(-1)
+                            setLessonDraft({ category: 'Insight', text: '', attachments: [] })
+                          }}
+                        >
+                          Add lesson
+                        </Button>
+                      </Group>
+
+                      {/* inline add form */}
+                      {editingLessonIdx === -1 && lessonDraft ? (() => {
+                        const meta = lessonCategoryMeta(lessonDraft.category)
+                        return (
+                          <Card radius="lg" padding="md" withBorder style={{ borderColor: `var(--mantine-color-${meta.color}-4)` }}>
+                            <Stack gap="sm">
+                              <Select
+                                label="Category"
+                                size="xs"
+                                radius="md"
+                                data={LESSON_CATEGORIES.map((c) => ({ value: c.value, label: c.value }))}
+                                value={lessonDraft.category}
+                                onChange={(v) => setLessonDraft((d) => d ? { ...d, category: v ?? 'Insight' } : d)}
+                                allowDeselect={false}
+                              />
+                              <Textarea
+                                label="Text"
+                                size="xs"
+                                radius="md"
+                                autosize
+                                minRows={3}
+                                value={lessonDraft.text}
+                                onChange={(e) => { const v = e.currentTarget.value; setLessonDraft((d) => d ? { ...d, text: v } : d) }}
+                                placeholder="Describe the lesson learnt…"
+                              />
+                              <div>
+                                <Text size="xs" fw={600} c="dimmed" mb={4}>Attachments</Text>
+                                <Group gap="xs">
+                                  <Button
+                                    component="label"
+                                    size="xs"
+                                    variant="default"
+                                    radius="xl"
+                                  >
+                                    Attach files
+                                    <input
+                                      type="file"
+                                      multiple
+                                      hidden
+                                      onChange={async (e) => {
+                                        if (!e.target.files) return
+                                        const input = e.currentTarget
+                                        const files = Array.from(e.target.files)
+                                        const newAtts = await Promise.all(files.map(fileToAttachment))
+                                        const merged = mergeAttachments(lessonDraft.attachments, newAtts, 'record')
+                                        if (!merged.error) setLessonDraft((d) => d ? { ...d, attachments: merged.attachments } : d)
+                                        if (input) input.value = ''
+                                      }}
+                                    />
+                                  </Button>
+                                  {lessonDraft.attachments.map((att) => (
+                                    <Badge
+                                      key={att.id}
+                                      size="xs"
+                                      variant="light"
+                                      radius="xl"
+                                      rightSection={
+                                        <ActionIcon size={10} variant="transparent" onClick={() =>
+                                          setLessonDraft((d) => d ? { ...d, attachments: d.attachments.filter((a) => a.id !== att.id) } : d)
+                                        }>
+                                          <IconX size={8} />
+                                        </ActionIcon>
+                                      }
+                                    >
+                                      {att.fileName}
+                                    </Badge>
+                                  ))}
+                                </Group>
+                              </div>
+                              <Group justify="flex-end" gap="xs">
+                                <Button type="button" size="xs" variant="default" radius="xl" onClick={() => { setEditingLessonIdx(null); setLessonDraft(null) }}>
+                                  Cancel
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="xs"
+                                  radius="xl"
+                                  disabled={!lessonDraft.text.trim()}
+                                  onClick={() => {
+                                    const newLesson: LessonLearnt = {
+                                      id: crypto.randomUUID(),
+                                      category: lessonDraft.category,
+                                      text: lessonDraft.text,
+                                      attachments: lessonDraft.attachments,
+                                    }
+                                    debugForm.setFieldValue('lessonsLearnt', [...debugForm.values.lessonsLearnt, newLesson])
+                                    setEditingLessonIdx(null)
+                                    setLessonDraft(null)
+                                  }}
+                                >
+                                  Save lesson
+                                </Button>
+                              </Group>
+                            </Stack>
+                          </Card>
+                        )
+                      })() : null}
+
+                      {/* existing lessons */}
+                      {debugForm.values.lessonsLearnt.length === 0 && editingLessonIdx !== -1 ? (
+                        <Text size="sm" c="dimmed">No lessons recorded yet. Click "Add lesson" to start.</Text>
+                      ) : (
+                        <Stack gap="xs">
+                          {debugForm.values.lessonsLearnt.map((lesson, idx) => {
+                            const meta = lessonCategoryMeta(lesson.category)
+                            const LessonIcon = meta.icon
+                            if (editingLessonIdx === idx && lessonDraft) {
+                              const draftMeta = lessonCategoryMeta(lessonDraft.category)
+                              return (
+                                <Card key={lesson.id} radius="lg" padding="md" withBorder style={{ borderColor: `var(--mantine-color-${draftMeta.color}-4)` }}>
+                                  <Stack gap="sm">
+                                    <Select
+                                      label="Category"
+                                      size="xs"
+                                      radius="md"
+                                      data={LESSON_CATEGORIES.map((c) => ({ value: c.value, label: c.value }))}
+                                      value={lessonDraft.category}
+                                      onChange={(v) => setLessonDraft((d) => d ? { ...d, category: v ?? 'Insight' } : d)}
+                                      allowDeselect={false}
+                                    />
+                                    <Textarea
+                                      label="Text"
+                                      size="xs"
+                                      radius="md"
+                                      autosize
+                                      minRows={3}
+                                      value={lessonDraft.text}
+                                      onChange={(e) => { const v = e.currentTarget.value; setLessonDraft((d) => d ? { ...d, text: v } : d) }}
+                                    />
+                                    <div>
+                                      <Text size="xs" fw={600} c="dimmed" mb={4}>Attachments</Text>
+                                      <Group gap="xs">
+                                        <Button
+                                          component="label"
+                                          size="xs"
+                                          variant="default"
+                                          radius="xl"
+                                        >
+                                          Attach files
+                                          <input
+                                            type="file"
+                                            multiple
+                                            hidden
+                                            onChange={async (e) => {
+                                              if (!e.target.files) return
+                                              const input = e.currentTarget
+                                              const files = Array.from(e.target.files)
+                                              const newAtts = await Promise.all(files.map(fileToAttachment))
+                                              const merged = mergeAttachments(lessonDraft.attachments, newAtts, 'record')
+                                              if (!merged.error) setLessonDraft((d) => d ? { ...d, attachments: merged.attachments } : d)
+                                              if (input) input.value = ''
+                                            }}
+                                          />
+                                        </Button>
+                                        {lessonDraft.attachments.map((att) => (
+                                          <Badge
+                                            key={att.id}
+                                            size="xs"
+                                            variant="light"
+                                            radius="xl"
+                                            rightSection={
+                                              <ActionIcon size={10} variant="transparent" onClick={() =>
+                                                setLessonDraft((d) => d ? { ...d, attachments: d.attachments.filter((a) => a.id !== att.id) } : d)
+                                              }>
+                                                <IconX size={8} />
+                                              </ActionIcon>
+                                            }
+                                          >
+                                            {att.fileName}
+                                          </Badge>
+                                        ))}
+                                      </Group>
+                                    </div>
+                                    <Group justify="flex-end" gap="xs">
+                                      <Button type="button" size="xs" variant="default" radius="xl" onClick={() => { setEditingLessonIdx(null); setLessonDraft(null) }}>
+                                        Cancel
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="xs"
+                                        radius="xl"
+                                        disabled={!lessonDraft.text.trim()}
+                                        onClick={() => {
+                                          const updated: LessonLearnt = {
+                                            id: lesson.id,
+                                            category: lessonDraft.category,
+                                            text: lessonDraft.text,
+                                            attachments: lessonDraft.attachments,
+                                          }
+                                          const next = [...debugForm.values.lessonsLearnt]
+                                          next[idx] = updated
+                                          debugForm.setFieldValue('lessonsLearnt', next)
+                                          setEditingLessonIdx(null)
+                                          setLessonDraft(null)
+                                        }}
+                                      >
+                                        Save
+                                      </Button>
+                                    </Group>
+                                  </Stack>
+                                </Card>
+                              )
+                            }
+                            return (
+                              <Card
+                                key={lesson.id}
+                                radius="lg"
+                                padding="sm"
+                                withBorder
+                                style={{ borderColor: `var(--mantine-color-${meta.color}-4)`, borderLeftWidth: 3, borderLeftColor: `var(--mantine-color-${meta.color}-5)` }}
+                              >
+                                <Group gap="sm" align="flex-start" wrap="nowrap">
+                                  <ThemeIcon size="md" radius="xl" variant="light" color={meta.color} style={{ flexShrink: 0, marginTop: 2 }}>
+                                    <LessonIcon size={14} />
+                                  </ThemeIcon>
+                                  <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
+                                    <Group gap="xs">
+                                      <Badge size="xs" variant="light" color={meta.color} radius="xl">{lesson.category}</Badge>
+                                      {lesson.attachments.length > 0 ? (
+                                        <Badge size="xs" variant="outline" color="gray" radius="xl" leftSection={<IconPaperclip size={9} />}>
+                                          {lesson.attachments.length}
+                                        </Badge>
+                                      ) : null}
+                                    </Group>
+                                    <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{lesson.text}</Text>
+                                  </Stack>
+                                  <Group gap={4} style={{ flexShrink: 0 }}>
+                                    <ActionIcon
+                                      size="sm"
+                                      variant="subtle"
+                                      disabled={editingLessonIdx !== null}
+                                      onClick={() => { setEditingLessonIdx(idx); setLessonDraft({ category: lesson.category, text: lesson.text, attachments: [...lesson.attachments] }) }}
+                                    >
+                                      <IconEdit size={13} />
+                                    </ActionIcon>
+                                    <ActionIcon
+                                      size="sm"
+                                      variant="subtle"
+                                      color="red"
+                                      disabled={editingLessonIdx !== null}
+                                      onClick={() => {
+                                        const next = debugForm.values.lessonsLearnt.filter((_, i) => i !== idx)
+                                        debugForm.setFieldValue('lessonsLearnt', next)
+                                      }}
+                                    >
+                                      <IconTrash size={13} />
+                                    </ActionIcon>
+                                  </Group>
+                                </Group>
+                              </Card>
+                            )
+                          })}
+                        </Stack>
+                      )}
+                    </Stack>
+                  </Card>
+
+                  <Group justify="flex-end">
+                    <Button type="submit" radius="xl" loading={isSavingDebug}>
+                      {editingDebugRecordId ? 'Save changes' : 'Add entry'}
+                    </Button>
+                  </Group>
+                </Stack>
+              </form>
+            </Stack>
+          ) : currentPage === 'debug-list' ? (
+            <Stack gap="lg">
+              <div className="section-header">
+                <div>
+                  <Text className="eyebrow">Key Debug</Text>
+                  <Title order={2} className="form-title">Debug repository</Title>
+                  <Text className="form-copy">
+                    {debugRecords.length} entr{debugRecords.length === 1 ? 'y' : 'ies'} stored
+                  </Text>
+                </div>
+                <Group gap="sm">
+                  <Button
+                    radius="xl"
+                    leftSection={<IconClipboardText size={16} />}
+                    onClick={() => { setEditingDebugRecordId(null); debugForm.reset(); setCurrentPage('debug-form') }}
+                  >
+                    New entry
+                  </Button>
+                </Group>
+              </div>
+
+              <TextInput
+                placeholder="Search entries…"
+                value={debugSearchTerm}
+                onChange={(e) => setDebugSearchTerm(e.currentTarget.value)}
+                radius="md"
+                rightSection={debugSearchTerm ? (
+                  <ActionIcon size="sm" variant="subtle" onClick={() => setDebugSearchTerm('')}>
+                    <IconX size={14} />
+                  </ActionIcon>
+                ) : null}
+              />
+
+              {isLoadingDebugRecords ? (
+                <Stack gap="sm">
+                  {[1,2,3].map((i) => <Skeleton key={i} height={80} radius="lg" />)}
+                </Stack>
+              ) : debugRecords.length === 0 ? (
+                <Card radius="xl" padding="lg" className="surface-card">
+                  <Stack align="center" gap="sm" py="xl">
+                    <ThemeIcon size="xl" radius="xl" variant="light" color="gray">
+                      <IconBug size={24} />
+                    </ThemeIcon>
+                    <Text fw={600}>No debug entries yet</Text>
+                    <Text size="sm" c="dimmed">Add the first significant debug result.</Text>
+                    <Button radius="xl" onClick={() => setCurrentPage('debug-form')}>New entry</Button>
+                  </Stack>
+                </Card>
+              ) : (
+                <Stack gap="sm">
+                  {debugRecords
+                    .filter((r) => {
+                      const q = debugSearchTerm.toLowerCase()
+                      if (!q) return true
+                      return (
+                        r.supplier.toLowerCase().includes(q) ||
+                        r.component.toLowerCase().includes(q) ||
+                        r.description.toLowerCase().includes(q) ||
+                        r.projects.some((p) => p.toLowerCase().includes(q)) ||
+                        r.departments.some((d) => d.toLowerCase().includes(q)) ||
+                        r.category.some((c) => c.toLowerCase().includes(q))
+                      )
+                    })
+                    .map((record) => {
+                      const isExpanded = selectedDebugRecordId === record.id
+                      return (
+                        <Card
+                          key={record.id}
+                          radius="xl"
+                          padding="lg"
+                          className="surface-card"
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => setSelectedDebugRecordId(isExpanded ? null : record.id)}
+                        >
+                          <Stack gap="sm">
+                            <Group justify="space-between" align="flex-start">
+                              <Group gap="xs" wrap="wrap">
+                                <Text className="record-row-key">{record.id.slice(0, 8).toUpperCase()}</Text>
+                                {record.category.map((cat) => (
+                                  <Badge key={cat} size="xs" variant="light" color={cat === 'HW' ? 'orange' : cat === 'SW' ? 'blue' : 'teal'} radius="xl">
+                                    {cat}
+                                  </Badge>
+                                ))}
+                                {record.projects.map((p) => (
+                                  <Badge key={p} size="xs" variant="outline" color="gray" radius="xl">{p}</Badge>
+                                ))}
+                              </Group>
+                              <Group gap="xs">
+                                <Text size="xs" c="dimmed">
+                                  {record.startDate} → {record.endDate}
+                                </Text>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="subtle"
+                                  onClick={(e) => { e.stopPropagation(); startEditingDebugRecord(record) }}
+                                >
+                                  <IconEdit size={14} />
+                                </ActionIcon>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="subtle"
+                                  color="red"
+                                  loading={isDeletingDebugId === record.id}
+                                  onClick={(e) => { e.stopPropagation(); void handleDeleteDebug(record) }}
+                                >
+                                  <IconTrash size={14} />
+                                </ActionIcon>
+                              </Group>
+                            </Group>
+
+                            {(record.supplier || record.component) ? (
+                              <Group gap="xs">
+                                {record.supplier ? <Text size="sm" fw={600}>{record.supplier}</Text> : null}
+                                {record.supplier && record.component ? <Text size="sm" c="dimmed">·</Text> : null}
+                                {record.component ? <Text size="sm">{record.component}</Text> : null}
+                              </Group>
+                            ) : null}
+
+                            <Text size="sm" lineClamp={isExpanded ? undefined : 2} c="dimmed">
+                              {record.description}
+                            </Text>
+
+                            {isExpanded ? (
+                              <Stack gap="xs">
+                                {record.departments.length > 0 ? (
+                                  <Group gap="xs">
+                                    <Text size="xs" c="dimmed">Departments:</Text>
+                                    {record.departments.map((d) => (
+                                      <Badge key={d} size="xs" variant="dot" color="gray" radius="xl">{d}</Badge>
+                                    ))}
+                                  </Group>
+                                ) : null}
+                                {record.outcome.length > 0 ? (
+                                  <Group gap="xs" wrap="wrap">
+                                    <Text size="xs" c="dimmed">Outcome:</Text>
+                                    {record.outcome.map((o) => (
+                                      <Badge key={o} size="xs" variant="light" color="teal" radius="xl">{o}</Badge>
+                                    ))}
+                                  </Group>
+                                ) : null}
+                                {(record.supplierRating ?? []).some((e) => e.rating > 0) ? (
+                                  <Stack gap={4}>
+                                    <Text size="xs" c="dimmed">Supplier capability rating:</Text>
+                                    {(record.supplierRating ?? []).filter((e) => e.rating > 0).map((entry) => (
+                                      <div className="supplier-rating-row compact" key={entry.label}>
+                                        <Text size="xs" className="supplier-rating-label">
+                                          {entry.label}
+                                        </Text>
+                                        <HalfStarRating value={entry.rating} readOnly />
+                                      </div>
+                                    ))}
+                                  </Stack>
+                                ) : null}
+                                {record.occurrencePhase ? (
+                                  <Group gap="xs">
+                                    <Text size="xs" c="dimmed">Phase:</Text>
+                                    <Badge size="xs" variant="light" color="violet" radius="xl">{record.occurrencePhase}</Badge>
+                                  </Group>
+                                ) : null}
+                                {(record.demerit ?? 0) > 0 ? (
+                                  <Group gap="xs">
+                                    <Text size="xs" c="dimmed">Demerit:</Text>
+                                    <Badge size="xs" variant="filled" color={(record.demerit ?? 0) >= 70 ? 'red' : (record.demerit ?? 0) >= 40 ? 'orange' : 'yellow'} radius="xl">{record.demerit}</Badge>
+                                  </Group>
+                                ) : null}
+                                {(record.linkedActivityIds ?? []).length > 0 ? (
+                                  <Stack gap={2}>
+                                    <Text size="xs" c="dimmed">Linked activities:</Text>
+                                    <Group gap="xs" wrap="wrap">
+                                      {(record.linkedActivityIds ?? []).map((id) => {
+                                        const rec = records.find((r) => r.id === id)
+                                        return (
+                                          <Badge key={id} size="xs" variant="outline" color="blue" radius="xl">
+                                            {id.slice(0, 8).toUpperCase()}{rec ? ` — ${rec.title}` : ''}
+                                          </Badge>
+                                        )
+                                      })}
+                                    </Group>
+                                  </Stack>
+                                ) : null}
+                                {record.attachments.length > 0 ? (
+                                  <Stack gap="xs">
+                                    <Text size="xs" c="dimmed">Attachments ({record.attachments.length})</Text>
+                                    {record.attachments.map((att) => (
+                                      <Group key={att.id} gap="xs">
+                                        {attachmentIcon(att)}
+                                        <Text
+                                          size="sm"
+                                          style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                                          onClick={(e) => { e.stopPropagation(); void handleDebugPreviewAttachment(record, att) }}
+                                        >
+                                          {att.fileName}
+                                        </Text>
+                                        <Text size="xs" c="dimmed">{(att.sizeBytes / 1024).toFixed(0)} KB</Text>
+                                      </Group>
+                                    ))}
+                                  </Stack>
+                                ) : null}
+                                {(record.lessonsLearnt ?? []).length > 0 ? (
+                                  <Stack gap={4}>
+                                    <Text size="xs" c="dimmed">Lessons learnt ({record.lessonsLearnt.length}):</Text>
+                                    {record.lessonsLearnt.map((lesson) => {
+                                      const m = lessonCategoryMeta(lesson.category)
+                                      const LessonIcon = m.icon
+                                      return (
+                                        <Group key={lesson.id} gap="xs" align="flex-start" wrap="nowrap">
+                                          <ThemeIcon size="xs" radius="xl" variant="light" color={m.color} style={{ flexShrink: 0, marginTop: 1 }}>
+                                            <LessonIcon size={9} />
+                                          </ThemeIcon>
+                                          <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{lesson.text}</Text>
+                                        </Group>
+                                      )
+                                    })}
+                                  </Stack>
+                                ) : null}
+                                <Text size="xs" c="dimmed">
+                                  Added {dayjs(record.submittedAt).format('DD MMM YYYY')}
+                                  {record.lastModifiedAt && record.lastModifiedAt !== record.submittedAt
+                                    ? ` · Updated ${dayjs(record.lastModifiedAt).format('DD MMM YYYY')}`
+                                    : ''}
+                                </Text>
+                              </Stack>
+                            ) : null}
+                          </Stack>
+                        </Card>
+                      )
+                    })
+                  }
+                </Stack>
+              )}
+
+              {debugPreviewAttachmentKey ? (() => {
+                const [recId, attId] = debugPreviewAttachmentKey.split(':')
+                const rec = debugRecords.find((r) => r.id === recId)
+                const att = rec?.attachments.find((a) => a.id === attId)
+                if (!att) return null
+                const data = debugPreviewAttachmentDataByKey[debugPreviewAttachmentKey]
+                return (
+                  <Modal
+                    opened
+                    onClose={() => setDebugPreviewAttachmentKey(null)}
+                    title={att.fileName}
+                    size="xl"
+                    radius="lg"
+                  >
+                    {debugLoadingAttachmentKey === debugPreviewAttachmentKey ? (
+                      <Loader size="sm" />
+                    ) : data ? (
+                      <Stack gap="sm">
+                        {attachmentPreviewData(data) ? (
+                          <img
+                            src={attachmentPreviewData(data) ?? ''}
+                            alt={data.fileName}
+                            style={{ maxWidth: '100%', borderRadius: 8 }}
+                          />
+                        ) : (
+                          <Text size="sm" c="dimmed">Preview not available for this file type.</Text>
+                        )}
+                        <Button
+                          variant="light"
+                          radius="xl"
+                          leftSection={<IconFileExport size={16} />}
+                          onClick={() => downloadAttachment(data)}
+                        >
+                          Download
+                        </Button>
+                      </Stack>
+                    ) : null}
+                  </Modal>
+                )
+              })() : null}
+            </Stack>
+          ) : currentPage === 'debug-insights' ? (
+            <Stack gap="lg">
+              <div className="section-header">
+                <div>
+                  <Text className="eyebrow">Key Debug</Text>
+                  <Title order={2} className="form-title">Debug insights</Title>
+                  <Text className="form-copy">
+                    Analytics across {debugRecords.length} debug entr{debugRecords.length === 1 ? 'y' : 'ies'}.
+                  </Text>
+                </div>
+              </div>
+
+              {debugRecords.length === 0 ? (
+                <Card radius="xl" padding="lg" className="surface-card">
+                  <Stack align="center" gap="sm" py="xl">
+                    <ThemeIcon size="xl" radius="xl" variant="light" color="gray">
+                      <IconChartBar size={24} />
+                    </ThemeIcon>
+                    <Text fw={600}>No data yet</Text>
+                    <Text size="sm" c="dimmed">Add debug entries to see analytics.</Text>
+                  </Stack>
+                </Card>
+              ) : (
+                <Stack gap="md">
+                  <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
+                    {[
+                      { label: 'Total entries', value: debugRecords.length },
+                      { label: 'HW entries', value: debugRecords.filter((r) => r.category.includes('HW')).length },
+                      { label: 'SW entries', value: debugRecords.filter((r) => r.category.includes('SW')).length },
+                      { label: 'System entries', value: debugRecords.filter((r) => r.category.includes('System')).length },
+                    ].map(({ label, value }) => (
+                      <Card key={label} radius="xl" padding="md" className="surface-card">
+                        <Stack gap={2} align="center">
+                          <Text size="xl" fw={700}>{value}</Text>
+                          <Text size="xs" c="dimmed" ta="center">{label}</Text>
+                        </Stack>
+                      </Card>
+                    ))}
+                  </SimpleGrid>
+
+                  {(() => {
+                    const projectCounts: Record<string, number> = {}
+                    const deptCounts: Record<string, number> = {}
+                    const mfrCounts: Record<string, number> = {}
+                    for (const r of debugRecords) {
+                      for (const p of r.projects) projectCounts[p] = (projectCounts[p] ?? 0) + 1
+                      for (const d of r.departments) deptCounts[d] = (deptCounts[d] ?? 0) + 1
+                      if (r.supplier) mfrCounts[r.supplier] = (mfrCounts[r.supplier] ?? 0) + 1
+                    }
+                    const toSorted = (obj: Record<string, number>) =>
+                      Object.entries(obj).sort(([,a],[,b]) => b - a)
+                    const maxVal = (entries: [string, number][]) => Math.max(...entries.map(([,v]) => v), 1)
+
+                    return (
+                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                        {[
+                          { title: 'By project', entries: toSorted(projectCounts) },
+                          { title: 'By department', entries: toSorted(deptCounts) },
+                          { title: 'By supplier', entries: toSorted(mfrCounts) },
+                        ].map(({ title, entries }) => (
+                          <Card key={title} radius="xl" padding="lg" className="surface-card">
+                            <Stack gap="sm">
+                              <Text fw={700}>{title}</Text>
+                              {entries.length === 0 ? (
+                                <Text size="sm" c="dimmed">No data</Text>
+                              ) : (
+                                entries.slice(0, 8).map(([label, count]) => (
+                                  <div key={label}>
+                                    <Group justify="space-between" mb={4}>
+                                      <Text size="sm">{label}</Text>
+                                      <Text size="sm" fw={600}>{count}</Text>
+                                    </Group>
+                                    <Progress
+                                      value={(count / maxVal(entries)) * 100}
+                                      radius="xl"
+                                      size="sm"
+                                    />
+                                  </div>
+                                ))
+                              )}
+                            </Stack>
+                          </Card>
+                        ))}
+                      </SimpleGrid>
+                    )
+                  })()}
+                </Stack>
+              )}
+            </Stack>
+          ) : currentPage === 'debug-admin' ? (
+            <Stack gap="lg">
+              <div className="section-header">
+                <div>
+                  <Text className="eyebrow">Key Debug / Administration</Text>
+                  <Title order={2} className="form-title">
+                    Debug admin settings
+                  </Title>
+                  <Text className="form-copy">
+                    Manage Key Debug–specific values: categories and outcome options.
+                    Projects and departments are shared with the Activity Tracker and are
+                    editable from its admin page.
+                  </Text>
+                </div>
+
+                <Group gap="sm">
+                  <Button
+                    variant="default"
+                    color="gray"
+                    radius="xl"
+                    onClick={() => {
+                      setDebugCategoriesDraft(debugSettings.categories.join('\n'))
+                      setDebugOutcomeDraft(debugSettings.outcomeOptions.join('\n'))
+                      setDebugSettingsError(null)
+                    }}
+                  >
+                    Reset draft
+                  </Button>
+                  <Button
+                    variant="light"
+                    color="blue"
+                    radius="xl"
+                    loading={isSavingDebugSettings}
+                    onClick={() => void handleSaveDebugSettings()}
+                  >
+                    Save
+                  </Button>
+                </Group>
+              </div>
+
+              {debugSettingsError ? (
+                <Alert color="red" radius="xl">
+                  {debugSettingsError}
+                </Alert>
+              ) : null}
+
+              <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="md">
+                <AdminTextListEditor
+                  title="Categories"
+                  singularLabel="Category"
+                  description="Hardware, software, or system classification options."
+                  value={debugCategoriesDraft}
+                  onChange={setDebugCategoriesDraft}
+                />
+                <AdminTextListEditor
+                  title="Outcome options"
+                  singularLabel="Outcome"
+                  description="Selectable outcomes for a debug entry."
+                  value={debugOutcomeDraft}
+                  onChange={setDebugOutcomeDraft}
+                />
+              </SimpleGrid>
             </Stack>
           ) : (
             <Stack gap="lg">

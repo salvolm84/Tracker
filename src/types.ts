@@ -116,6 +116,7 @@ export interface ActivityRecord {
   comments: RecordComment[]
   history: RecordHistoryEntry[]
   lastModifiedAt: string
+  labActivity: string
 }
 
 export interface ActivityPayload {
@@ -133,6 +134,7 @@ export interface ActivityPayload {
   reminderCadence: ReminderCadence
   categories: string[]
   attachments: AttachmentPayload[]
+  labActivity: string
   expectedLastModifiedAt?: string | null
 }
 
@@ -185,6 +187,74 @@ export interface QuickUpdatePayload {
   expectedLastModifiedAt?: string | null
 }
 
+export interface DebugSettings {
+  categories: string[]
+  outcomeOptions: string[]
+}
+
+export interface SupplierRatingEntry {
+  label: string
+  rating: number
+}
+
+export interface DebugRecord {
+  id: string
+  submittedAt: string
+  projects: string[]
+  startDate: string
+  endDate: string
+  category: string[]
+  description: string
+  attachments: AttachmentPayload[]
+  supplier: string
+  component: string
+  departments: string[]
+  supplierRating: SupplierRatingEntry[]
+  outcome: string[]
+  lastModifiedAt: string
+  occurrencePhase: string
+  demerit: number
+  linkedActivityIds: string[]
+  lessonsLearnt: LessonLearnt[]
+}
+
+export interface DebugPayload {
+  projects: string[]
+  startDate: string
+  endDate: string
+  category: string[]
+  description: string
+  attachments: AttachmentPayload[]
+  supplier: string
+  component: string
+  departments: string[]
+  supplierRating: SupplierRatingEntry[]
+  outcome: string[]
+  occurrencePhase: string
+  demerit: number
+  linkedActivityIds: string[]
+  lessonsLearnt: LessonLearnt[]
+  expectedLastModifiedAt?: string | null
+}
+
+export interface DebugFormValues {
+  projects: string[]
+  startDate: Date | null
+  endDate: Date | null
+  category: string[]
+  description: string
+  attachments: AttachmentPayload[]
+  supplier: string
+  component: string
+  departments: string[]
+  supplierRating: SupplierRatingEntry[]
+  outcome: string[]
+  occurrencePhase: string
+  demerit: number
+  linkedActivityIds: string[]
+  lessonsLearnt: LessonLearnt[]
+}
+
 export interface ActivityFormValues {
   title: string
   owner: string | null
@@ -199,5 +269,13 @@ export interface ActivityFormValues {
   status: ActivityStatus | null
   reminderCadence: ReminderCadence | null
   categories: string[]
+  attachments: AttachmentPayload[]
+  labActivity: string
+}
+
+export interface LessonLearnt {
+  id: string
+  category: string
+  text: string
   attachments: AttachmentPayload[]
 }
