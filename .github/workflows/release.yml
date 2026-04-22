@@ -19,10 +19,8 @@ jobs:
         include:
           - name: macos
             os: macos-latest
-            bundles: app
           - name: windows
             os: windows-latest
-            bundles: msi,nsis
 
     steps:
       - name: Checkout
@@ -41,7 +39,12 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Build native bundle
-        run: npm run tauri -- build --bundles ${{ matrix.bundles }}
+        if: matrix.name == 'macos'
+        run: npm run tauri -- build --bundles app
+
+      - name: Build portable Windows executable
+        if: matrix.name == 'windows'
+        run: npm run tauri -- build --no-bundle
 
       - name: Sign macOS app (ad-hoc)
         if: matrix.name == 'macos'
@@ -68,7 +71,12 @@ jobs:
               "$app_path" \
               "release/Tracker_${GITHUB_REF_NAME}_${{ matrix.name }}_${RUNNER_ARCH}.zip"
           else
-            find src-tauri/target/release/bundle -type f \( -name '*.msi' -o -name '*.exe' \) -exec cp {} release/ \;
+            exe_path="$(find src-tauri/target/release -maxdepth 1 -type f -name '*.exe' -print -quit)"
+            if [ -z "$exe_path" ]; then
+              echo "No Windows executable found"
+              exit 1
+            fi
+            cp "$exe_path" "release/Electronics.Application.Engineering_${GITHUB_REF_NAME}_windows_x64_portable.exe"
           fi
 
       - name: Upload release candidate artifacts
@@ -98,14 +106,14 @@ jobs:
           cat > release-notes.md <<'NOTES'
           Tracker desktop release.
 
-          Installers are built by GitHub Actions on native macOS and Windows runners.
+          Artifacts are built by GitHub Actions on native macOS and Windows runners.
 
           **macOS:** download the zip, extract it, and open Tracker.app.
           The app is ad-hoc signed but not notarized. On first launch macOS may warn
           that the developer cannot be verified — right-click the app and choose Open
           to bypass this once.
 
-          **Windows:** download the MSI or EXE installer.
+          **Windows:** download the portable EXE and run it in place. No installer is required.
           NOTES
 
       - name: Publish release
