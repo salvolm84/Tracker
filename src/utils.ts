@@ -187,7 +187,10 @@ export function matchesSharedFilters(record: ActivityRecord, filters: StatsFilte
     (filters.priorities.length === 0 || filters.priorities.includes(record.priority)) &&
     (filters.statuses.length === 0 || filters.statuses.includes(record.status)) &&
     (filters.efforts.length === 0 || filters.efforts.includes(record.effort)) &&
-    (filters.impacts.length === 0 || filters.impacts.includes(record.impact))
+    (filters.impacts.length === 0 || filters.impacts.includes(record.impact)) &&
+    (!filters.hwDevelopment || record.hwDevelopment) &&
+    (!filters.swDevelopment || record.swDevelopment) &&
+    (!filters.labActivity || record.labActivity)
   )
 }
 

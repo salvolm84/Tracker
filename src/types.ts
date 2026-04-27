@@ -63,6 +63,9 @@ export interface StatsFilters {
   statuses: ActivityStatus[]
   efforts: string[]
   impacts: string[]
+  hwDevelopment: boolean
+  swDevelopment: boolean
+  labActivity: boolean
 }
 
 export interface AttachmentPayload {
@@ -117,7 +120,9 @@ export interface ActivityRecord {
   comments: RecordComment[]
   history: RecordHistoryEntry[]
   lastModifiedAt: string
-  labActivity: string
+  labActivity: boolean
+  hwDevelopment: boolean
+  swDevelopment: boolean
 }
 
 export interface ActivityPayload {
@@ -134,7 +139,9 @@ export interface ActivityPayload {
   status: ActivityStatus
   categories: string[]
   attachments: AttachmentPayload[]
-  labActivity: string
+  labActivity: boolean
+  hwDevelopment: boolean
+  swDevelopment: boolean
   expectedLastModifiedAt?: string | null
 }
 
@@ -270,7 +277,9 @@ export interface ActivityFormValues {
   status: ActivityStatus | null
   categories: string[]
   attachments: AttachmentPayload[]
-  labActivity: string
+  labActivity: boolean
+  hwDevelopment: boolean
+  swDevelopment: boolean
 }
 
 export interface LessonLearnt {

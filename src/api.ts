@@ -74,6 +74,9 @@ export async function getDatabaseStats(filters?: StatsFilters) {
       statuses: [],
       efforts: [],
       impacts: [],
+      hwDevelopment: false,
+      swDevelopment: false,
+      labActivity: false,
     },
   })
 }

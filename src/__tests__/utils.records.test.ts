@@ -44,7 +44,9 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     comments: [],
     history: [],
     lastModifiedAt: '2024-01-15T10:00:00Z',
-    labActivity: 'None',
+    labActivity: false,
+    hwDevelopment: false,
+    swDevelopment: false,
     ...overrides,
   }
 }
@@ -59,6 +61,9 @@ const emptyFilters: StatsFilters = {
   statuses: [],
   efforts: [],
   impacts: [],
+  hwDevelopment: false,
+  swDevelopment: false,
+  labActivity: false,
 }
 
 // ── durationDays ──────────────────────────────────────────────────────────────

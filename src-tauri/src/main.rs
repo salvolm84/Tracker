@@ -190,8 +190,12 @@ struct ActivityInput {
     categories: Vec<String>,
     #[serde(default)]
     attachments: Vec<Attachment>,
-    #[serde(default = "default_lab_activity")]
-    lab_activity: String,
+    #[serde(default, deserialize_with = "deserialize_lab_activity")]
+    lab_activity: bool,
+    #[serde(default)]
+    hw_development: bool,
+    #[serde(default)]
+    sw_development: bool,
     #[serde(default)]
     expected_last_modified_at: Option<String>,
 }
@@ -254,34 +258,31 @@ struct LessonLearnt {
     attachments: Vec<Attachment>,
 }
 
-fn deserialize_lab_activity<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn deserialize_lab_activity<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     struct Visitor;
     impl<'de> serde::de::Visitor<'de> for Visitor {
-        type Value = String;
+        type Value = bool;
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("string or bool")
+            f.write_str("bool or string")
         }
-        fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<String, E> {
-            Ok(if v { "Significant" } else { "None" }.to_string())
+        fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<bool, E> {
+            Ok(v)
         }
-        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<String, E> {
-            Ok(v.to_string())
+        // Old schema stored a String ("None" / "Minimal" / "Significant")
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<bool, E> {
+            Ok(!v.eq_ignore_ascii_case("none") && !v.is_empty())
         }
-        fn visit_none<E: serde::de::Error>(self) -> Result<String, E> {
-            Ok("None".to_string())
+        fn visit_none<E: serde::de::Error>(self) -> Result<bool, E> {
+            Ok(false)
         }
-        fn visit_unit<E: serde::de::Error>(self) -> Result<String, E> {
-            Ok("None".to_string())
+        fn visit_unit<E: serde::de::Error>(self) -> Result<bool, E> {
+            Ok(false)
         }
     }
     deserializer.deserialize_any(Visitor)
-}
-
-fn default_lab_activity() -> String {
-    "None".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,8 +313,12 @@ struct ActivityRecord {
     history: Vec<RecordHistoryEntry>,
     #[serde(default)]
     last_modified_at: String,
-    #[serde(default = "default_lab_activity", deserialize_with = "deserialize_lab_activity")]
-    lab_activity: String,
+    #[serde(default, deserialize_with = "deserialize_lab_activity")]
+    lab_activity: bool,
+    #[serde(default)]
+    hw_development: bool,
+    #[serde(default)]
+    sw_development: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -2042,6 +2047,8 @@ fn write_activity_record(db_path: &Path, payload: ActivityInput) -> Result<usize
         categories: payload.categories,
         attachments: payload.attachments,
         lab_activity: payload.lab_activity,
+        hw_development: payload.hw_development,
+        sw_development: payload.sw_development,
         comments: Vec::new(),
         history: vec![history_entry("created", "Record created".to_string())],
         last_modified_at: created_at,
@@ -2226,6 +2233,8 @@ fn update_activity_record(
     record.categories = payload.categories;
     record.attachments = payload.attachments;
     record.lab_activity = payload.lab_activity;
+    record.hw_development = payload.hw_development;
+    record.sw_development = payload.sw_development;
     record.history.push(history_entry(
         "record_updated",
         if changed_fields.is_empty() {
@@ -2538,21 +2547,14 @@ fn matches_filters(record: &ActivityRecord, filters: &StatsFilters) -> bool {
         && impact_match
 }
 
-fn portable_db_directory() -> Result<PathBuf, String> {
-    let executable_path = env::current_exe()
-        .map_err(|error| format!("Unable to resolve the current executable path: {error}"))?;
+fn portable_db_directory() -> Option<PathBuf> {
+    let executable_path = env::current_exe().ok()?;
+    let executable_dir = executable_path.parent()?;
 
-    let executable_dir = executable_path.parent().ok_or_else(|| {
-        format!(
-            "Unable to resolve the executable directory for {}",
-            executable_path.display()
-        )
-    })?;
-
-    let macos_bundle_root = executable_dir
+    let candidate = executable_dir
         .parent()
         .and_then(|contents| {
-            if contents.file_name().and_then(|value| value.to_str()) == Some("Contents") {
+            if contents.file_name().and_then(|v| v.to_str()) == Some("Contents") {
                 contents.parent()
             } else {
                 None
@@ -2561,21 +2563,25 @@ fn portable_db_directory() -> Result<PathBuf, String> {
         .filter(|bundle_root| {
             bundle_root
                 .extension()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value.eq_ignore_ascii_case("app"))
-        });
+                .and_then(|v| v.to_str())
+                .is_some_and(|v| v.eq_ignore_ascii_case("app"))
+        })
+        .and_then(|bundle_root| bundle_root.parent())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| executable_dir.to_path_buf());
 
-    if let Some(bundle_root) = macos_bundle_root {
-        return Ok(bundle_root
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| executable_dir.to_path_buf()));
+    // Only return this path if we can actually write there.
+    if fs::metadata(&candidate)
+        .map(|m| !m.permissions().readonly())
+        .unwrap_or(false)
+    {
+        Some(candidate)
+    } else {
+        None
     }
-
-    Ok(executable_dir.to_path_buf())
 }
 
-fn shared_db_path(_app: &AppHandle) -> Result<PathBuf, String> {
+fn shared_db_path(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(path) = env::var("TRACKER_DB_PATH") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -2583,9 +2589,23 @@ fn shared_db_path(_app: &AppHandle) -> Result<PathBuf, String> {
         }
     }
 
-    let mut base = portable_db_directory()?;
-    base.push(default_db_file_name());
-    Ok(base)
+    // Prefer a portable DB next to the app; fall back to the standard app data
+    // directory when the app lives somewhere not user-writable (e.g. /Applications/).
+    let base = if let Some(dir) = portable_db_directory() {
+        dir
+    } else {
+        use tauri::Manager;
+        let mut dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Unable to resolve app data directory: {e}"))?;
+        dir.push("tracker-db");
+        dir
+    };
+
+    let mut path = base;
+    path.push(default_db_file_name());
+    Ok(path)
 }
 
 fn sanitize_string_list(items: Vec<String>) -> Vec<String> {
@@ -3191,7 +3211,9 @@ fn sanitize_imported_record(
         reminder_cadence: record.reminder_cadence.clone(),
         categories: record.categories.clone(),
         attachments: record.attachments.clone(),
-        lab_activity: record.lab_activity.clone(),
+        lab_activity: record.lab_activity,
+        hw_development: record.hw_development,
+        sw_development: record.sw_development,
         expected_last_modified_at: None,
     };
     let sanitized_payload = sanitize_and_validate(payload, settings)?;
@@ -3476,11 +3498,6 @@ mod tests {
     }
 
     #[test]
-    fn default_lab_activity_returns_none() {
-        assert_eq!(default_lab_activity(), "None");
-    }
-
-    #[test]
     fn default_schema_version_is_one() {
         assert_eq!(default_schema_version(), 1);
     }
@@ -3519,39 +3536,40 @@ mod tests {
 
     // ── deserialize_lab_activity ──────────────────────────────────────────────
 
+    #[derive(Deserialize)]
+    struct LabWrapper {
+        #[serde(deserialize_with = "deserialize_lab_activity")]
+        v: bool,
+    }
+
     #[test]
     fn deserialize_lab_activity_handles_bool_false() {
-        let json = "false";
-        let result: String = serde_json::from_str::<serde_json::Value>(json)
-            .map(|v| match v {
-                serde_json::Value::Bool(b) => if b { "Significant" } else { "None" }.to_string(),
-                serde_json::Value::String(s) => s,
-                _ => "None".to_string(),
-            })
-            .unwrap();
-        assert_eq!(result, "None");
+        let w: LabWrapper = serde_json::from_str(r#"{"v":false}"#).unwrap();
+        assert!(!w.v);
     }
 
     #[test]
     fn deserialize_lab_activity_handles_bool_true() {
-        let json = "true";
-        let result = match serde_json::from_str::<serde_json::Value>(json).unwrap() {
-            serde_json::Value::Bool(b) => if b { "Significant" } else { "None" }.to_string(),
-            serde_json::Value::String(s) => s,
-            _ => "None".to_string(),
-        };
-        assert_eq!(result, "Significant");
+        let w: LabWrapper = serde_json::from_str(r#"{"v":true}"#).unwrap();
+        assert!(w.v);
     }
 
     #[test]
-    fn deserialize_lab_activity_handles_string() {
-        let json = r#""Minimal""#;
-        let result = match serde_json::from_str::<serde_json::Value>(json).unwrap() {
-            serde_json::Value::Bool(b) => if b { "Significant" } else { "None" }.to_string(),
-            serde_json::Value::String(s) => s,
-            _ => "None".to_string(),
-        };
-        assert_eq!(result, "Minimal");
+    fn deserialize_lab_activity_handles_string_none() {
+        let w: LabWrapper = serde_json::from_str(r#"{"v":"None"}"#).unwrap();
+        assert!(!w.v);
+    }
+
+    #[test]
+    fn deserialize_lab_activity_handles_string_significant() {
+        let w: LabWrapper = serde_json::from_str(r#"{"v":"Significant"}"#).unwrap();
+        assert!(w.v);
+    }
+
+    #[test]
+    fn deserialize_lab_activity_handles_string_minimal() {
+        let w: LabWrapper = serde_json::from_str(r#"{"v":"Minimal"}"#).unwrap();
+        assert!(w.v);
     }
 
     // ── replace_list_values ───────────────────────────────────────────────────

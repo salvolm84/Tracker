@@ -41,12 +41,16 @@ import {
   IconCheck,
   IconCircleCheck,
   IconClipboardText,
+  IconCode,
   IconCopy,
+  IconCpu,
   IconDatabase,
   IconEdit,
   IconFileDescription,
   IconFileExport,
+  IconFlask,
   IconHelp,
+  IconHistory,
   IconMessage,
   IconPaperclip,
   IconFolders,
@@ -283,7 +287,9 @@ const initialValues: ActivityFormValues = {
   status: defaultTrackerSettings.statuses[1] ?? defaultTrackerSettings.statuses[0] ?? null,
   categories: [],
   attachments: [],
-  labActivity: 'None',
+  labActivity: false,
+  hwDevelopment: false,
+  swDevelopment: false,
 }
 
 const fallbackStats: DatabaseStats = {
@@ -312,6 +318,9 @@ const emptySharedFilters: StatsFilters = {
   statuses: [],
   efforts: [],
   impacts: [],
+  hwDevelopment: false,
+  swDevelopment: false,
+  labActivity: false,
 }
 
 const pageShortcutMap: Record<PageKey, string> = {
@@ -1727,6 +1736,7 @@ function App() {
   const currentIsoWeekStart = dayjs().startOf('isoWeek')
   const currentIsoWeekEnd = dayjs().endOf('isoWeek')
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const adminPasswordRef = useRef<HTMLInputElement>(null)
   const dragCardRef = useRef<{ recordId: string; ghostEl: HTMLDivElement; grabOffsetX: number; grabOffsetY: number } | null>(null)
   const boardRecordsRef = useRef<ActivityRecord[]>([])
   const [currentPage, setCurrentPage] = useState<PageKey>('overview')
@@ -1882,19 +1892,20 @@ function App() {
     'Loading resource lists and database information...',
   )
   const trackerSettings = settingsFromBootstrap(bootstrapData)
-  const trackerStatusOptions = bootstrapData.statuses.map((value) => ({
+  const asc = (arr: string[]) => [...arr].sort((a, b) => a.localeCompare(b))
+  const trackerStatusOptions = asc(bootstrapData.statuses).map((value) => ({
     value,
     label: value,
   }))
-  const priorityOptions = bootstrapData.priorities.map((value) => ({
+  const priorityOptions = asc(bootstrapData.priorities).map((value) => ({
     value,
     label: value,
   }))
-  const effortOptions = bootstrapData.efforts.map((value) => ({
+  const effortOptions = asc(bootstrapData.efforts).map((value) => ({
     value,
     label: value,
   }))
-  const impactOptions = bootstrapData.impacts.map((value) => ({
+  const impactOptions = asc(bootstrapData.impacts).map((value) => ({
     value,
     label: value,
   }))
@@ -2065,7 +2076,9 @@ function App() {
       status: record.status,
       categories: [...record.categories],
       attachments: [...record.attachments],
-      labActivity: record.labActivity || 'None',
+      labActivity: record.labActivity ?? false,
+      hwDevelopment: record.hwDevelopment ?? false,
+      swDevelopment: record.swDevelopment ?? false,
     })
     setEditingRecordId(record.id)
     setEditingRecordVersion(recordConcurrencyToken(record))
@@ -2099,7 +2112,9 @@ function App() {
       status: record.status,
       categories: [...record.categories],
       attachments: [],
-      labActivity: record.labActivity || 'None',
+      labActivity: record.labActivity ?? false,
+      hwDevelopment: record.hwDevelopment ?? false,
+      swDevelopment: record.swDevelopment ?? false,
     })
     setEditingRecordId(null)
     setEditingRecordVersion(null)
@@ -2244,7 +2259,10 @@ function App() {
     sharedFilters.priorities.length > 0 ||
     sharedFilters.statuses.length > 0 ||
     sharedFilters.efforts.length > 0 ||
-    sharedFilters.impacts.length > 0
+    sharedFilters.impacts.length > 0 ||
+    sharedFilters.hwDevelopment ||
+    sharedFilters.swDevelopment ||
+    sharedFilters.labActivity
   const filteredRecords = records.filter((record) =>
     matchesSharedFilters(record, sharedFilters),
   )
@@ -2386,6 +2404,14 @@ function App() {
   const overdueCount = filteredRecordSignals.filter((entry) => entry.signals.overdue).length
   const dueSoonCount = filteredRecordSignals.filter((entry) => entry.signals.dueSoon).length
   const staleCount = filteredRecordSignals.filter((entry) => entry.signals.stale).length
+  const openCount = filteredRecords.filter((r) => r.status.toLowerCase() === 'open').length
+  const completedCount = filteredRecords.filter((r) => r.status.toLowerCase() === 'completed').length
+  const hwCount = filteredRecords.filter((r) => r.hwDevelopment).length
+  const swCount = filteredRecords.filter((r) => r.swDevelopment).length
+  const labCount = filteredRecords.filter((r) => r.labActivity).length
+  const recentRecords = [...filteredRecords]
+    .sort((a, b) => (b.lastModifiedAt || b.submittedAt).localeCompare(a.lastModifiedAt || a.submittedAt))
+    .slice(0, 5)
   const boardColumns = bootstrapData.statuses
     .filter((status) => showCompletedColumn || status !== completedStatusLabel)
     .map((status) => ({
@@ -3348,6 +3374,8 @@ function App() {
         categories: values.categories,
         attachments: values.attachments,
         labActivity: values.labActivity,
+        hwDevelopment: values.hwDevelopment,
+        swDevelopment: values.swDevelopment,
         expectedLastModifiedAt: editingRecordId ? editingRecordVersion : undefined,
       }
       const result = editingRecordId
@@ -4524,6 +4552,7 @@ function App() {
           setAdminPasswordInput('')
           setAdminPasswordError(null)
         }}
+        transitionProps={{ onEntered: () => adminPasswordRef.current?.focus() }}
         title="Admin access"
         centered
         size="sm"
@@ -4541,9 +4570,9 @@ function App() {
             <TextInput
               label="Password"
               type="password"
+              ref={adminPasswordRef}
               value={adminPasswordInput}
               error={adminPasswordError}
-              autoFocus
               onChange={(event) => {
                 setAdminPasswordInput(event.currentTarget.value)
                 if (adminPasswordError) {
@@ -5248,7 +5277,7 @@ function App() {
                       <MultiSelect
                         label="Owner"
                         placeholder="Any owner"
-                        data={bootstrapData.owners}
+                        data={asc(bootstrapData.owners)}
                         searchable
                         hidePickedOptions
                         value={sharedFilters.owners}
@@ -5259,7 +5288,7 @@ function App() {
                       <MultiSelect
                         label="Project"
                         placeholder="Any project"
-                        data={bootstrapData.projects}
+                        data={asc(bootstrapData.projects)}
                         searchable
                         hidePickedOptions
                         value={sharedFilters.projects}
@@ -5270,7 +5299,7 @@ function App() {
                       <MultiSelect
                         label="Department"
                         placeholder="Any department"
-                        data={bootstrapData.departments}
+                        data={asc(bootstrapData.departments)}
                         searchable
                         hidePickedOptions
                         value={sharedFilters.departments}
@@ -5281,7 +5310,7 @@ function App() {
                       <MultiSelect
                         label="Category"
                         placeholder="Any category"
-                        data={bootstrapData.categories}
+                        data={asc(bootstrapData.categories)}
                         searchable
                         hidePickedOptions
                         value={sharedFilters.categories}
@@ -5337,6 +5366,23 @@ function App() {
                         }
                       />
                     </div>
+                    <Group gap="xl">
+                      <Checkbox
+                        label="HW Development only"
+                        checked={sharedFilters.hwDevelopment}
+                        onChange={(e) => setSharedFilters((current) => ({ ...current, hwDevelopment: e.currentTarget.checked }))}
+                      />
+                      <Checkbox
+                        label="SW Development only"
+                        checked={sharedFilters.swDevelopment}
+                        onChange={(e) => setSharedFilters((current) => ({ ...current, swDevelopment: e.currentTarget.checked }))}
+                      />
+                      <Checkbox
+                        label="Lab Activity only"
+                        checked={sharedFilters.labActivity}
+                        onChange={(e) => setSharedFilters((current) => ({ ...current, labActivity: e.currentTarget.checked }))}
+                      />
+                    </Group>
                   </Stack>
                 ) : null}
               </Stack>
@@ -5396,7 +5442,7 @@ function App() {
                       <MultiSelect
                         label="Project"
                         placeholder="Any project"
-                        data={bootstrapData.projects}
+                        data={asc(bootstrapData.projects)}
                         searchable
                         hidePickedOptions
                         value={debugFilters.projects}
@@ -5405,7 +5451,7 @@ function App() {
                       <MultiSelect
                         label="Department"
                         placeholder="Any department"
-                        data={bootstrapData.departments}
+                        data={asc(bootstrapData.departments)}
                         searchable
                         hidePickedOptions
                         value={debugFilters.departments}
@@ -5414,7 +5460,7 @@ function App() {
                       <MultiSelect
                         label="Category"
                         placeholder="Any category"
-                        data={debugSettings.categories}
+                        data={asc(debugSettings.categories)}
                         searchable
                         hidePickedOptions
                         value={debugFilters.categories}
@@ -5441,7 +5487,7 @@ function App() {
                       <MultiSelect
                         label="Outcome"
                         placeholder="Any outcome"
-                        data={debugSettings.outcomeOptions}
+                        data={asc(debugSettings.outcomeOptions)}
                         searchable
                         hidePickedOptions
                         value={debugFilters.outcomes}
@@ -5459,275 +5505,186 @@ function App() {
               <div className="section-header">
                 <div>
                   <Text className="eyebrow">Overview</Text>
-                  <Title order={2} className="form-title">
-                    Database overview
-                  </Title>
+                  <Title order={2} className="form-title">Database overview</Title>
                   <Text className="form-copy">
-                    A quick read on how the shared tracker database is evolving
-                    across owners, projects, effort, impact, and priority.
+                    Health and activity at a glance — latest submissions, open work, and upcoming deadlines.
                   </Text>
                 </div>
-
-                <Group gap="sm">
-                  <Button
-                    variant="light"
-                    color="blue"
-                    radius="xl"
-                    onClick={() => void refreshStats()}
-                    loading={isRefreshingStats}
-                    disabled={isBootstrapping}
-                  >
-                    Refresh stats
-                  </Button>
-                </Group>
+                <Button variant="light" color="blue" radius="xl" onClick={() => void refreshStats()} loading={isRefreshingStats} disabled={isBootstrapping}>
+                  Refresh stats
+                </Button>
               </div>
 
-              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+              {/* ── Health strip ─────────────────────────────────────────── */}
+              <SimpleGrid cols={{ base: 2, md: 3, xl: 6 }} spacing="md">
+                <Card radius="xl" padding="lg" className="surface-card">
+                  <Text className="metric-label">Total records</Text>
+                  <Text className="insight-value">{filteredRecords.length}</Text>
+                </Card>
+                <Card radius="xl" padding="lg" className="surface-card">
+                  <Text className="metric-label">Open</Text>
+                  <Text className="insight-value" c="green">{openCount}</Text>
+                </Card>
+                <Card radius="xl" padding="lg" className="surface-card">
+                  <Text className="metric-label">Completed</Text>
+                  <Text className="insight-value" c="dimmed">{completedCount}</Text>
+                </Card>
+                <Card radius="xl" padding="lg" style={{ background: overdueCount > 0 ? 'rgba(239,68,68,0.08)' : undefined, border: overdueCount > 0 ? '1px solid rgba(239,68,68,0.25)' : undefined }}>
+                  <Text className="metric-label">Overdue</Text>
+                  <Text className="insight-value" c={overdueCount > 0 ? 'red' : 'dimmed'}>{overdueCount}</Text>
+                </Card>
+                <Card radius="xl" padding="lg" style={{ background: dueSoonCount > 0 ? 'rgba(249,115,22,0.08)' : undefined, border: dueSoonCount > 0 ? '1px solid rgba(249,115,22,0.25)' : undefined }}>
+                  <Text className="metric-label">Due Soon</Text>
+                  <Text className="insight-value" c={dueSoonCount > 0 ? 'orange' : 'dimmed'}>{dueSoonCount}</Text>
+                </Card>
+                <Card radius="xl" padding="lg" style={{ background: staleCount > 0 ? 'rgba(234,179,8,0.08)' : undefined, border: staleCount > 0 ? '1px solid rgba(234,179,8,0.25)' : undefined }}>
+                  <Text className="metric-label">Stale</Text>
+                  <Text className="insight-value" c={staleCount > 0 ? 'yellow' : 'dimmed'}>{staleCount}</Text>
+                </Card>
+              </SimpleGrid>
+
+              {/* ── Activity type breakdown ──────────────────────────────── */}
+              <Card radius="xl" padding="lg" className="surface-card">
+                <Group justify="space-between" align="center" mb="md">
+                  <Text fw={700}>Activity type breakdown</Text>
+                  <Text size="sm" c="dimmed">{filteredRecords.length} records in view</Text>
+                </Group>
+                <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+                  {[
+                    { label: 'HW Development', count: hwCount, icon: <IconCpu size={20} />, color: '#3b82f6' },
+                    { label: 'SW Development', count: swCount, icon: <IconCode size={20} />, color: '#8b5cf6' },
+                    { label: 'Lab Activity',   count: labCount, icon: <IconFlask size={20} />, color: '#10b981' },
+                  ].map(({ label, count, icon, color }) => (
+                    <Group key={label} gap="md" align="center" style={{ padding: '0.5rem 0' }}>
+                      <div style={{ color, flexShrink: 0 }}>{icon}</div>
+                      <div style={{ flex: 1 }}>
+                        <Text size="sm" c="dimmed">{label}</Text>
+                        <Group gap="xs" align="baseline">
+                          <Text fw={700} size="xl">{count}</Text>
+                          <Text size="xs" c="dimmed">
+                            {filteredRecords.length > 0 ? `${Math.round((count / filteredRecords.length) * 100)}%` : '—'}
+                          </Text>
+                        </Group>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ height: 6, borderRadius: 3, background: 'rgba(128,128,128,0.15)', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${filteredRecords.length > 0 ? (count / filteredRecords.length) * 100 : 0}%`, background: color, borderRadius: 3, transition: 'width 0.3s' }} />
+                        </div>
+                      </div>
+                    </Group>
+                  ))}
+                </SimpleGrid>
+              </Card>
+
+              {/* ── Recent activity feed ─────────────────────────────────── */}
+              <Card radius="xl" padding="lg" className="surface-card">
+                <Group justify="space-between" align="center" mb="md">
+                  <Group gap="xs">
+                    <IconHistory size={18} />
+                    <Text fw={700}>Recent activity</Text>
+                  </Group>
+                  <Text size="sm" c="dimmed">Last 5 modified records</Text>
+                </Group>
+                {recentRecords.length === 0 ? (
+                  <Text size="sm" c="dimmed">No records yet.</Text>
+                ) : (
+                  <Stack gap="xs">
+                    {recentRecords.map((record) => (
+                      <Group
+                        key={record.id}
+                        justify="space-between"
+                        align="center"
+                        gap="md"
+                        style={{ padding: '0.5rem 0.25rem', borderBottom: '1px solid rgba(128,128,128,0.1)', cursor: 'pointer' }}
+                        onClick={() => { setSelectedRecordId(record.id); navigateToPage('records') }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <Text size="sm" fw={600} truncate>{record.title}</Text>
+                          <Text size="xs" c="dimmed">{record.owner} · {record.projects.join(', ') || '—'}</Text>
+                        </div>
+                        <Group gap="xs" wrap="nowrap">
+                          <Badge size="xs" variant="light" color={activityStatusColor(record.status)}>{record.status}</Badge>
+                          <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>{formatTimestamp(record.lastModifiedAt || record.submittedAt)}</Text>
+                        </Group>
+                      </Group>
+                    ))}
+                  </Stack>
+                )}
+              </Card>
+
+              {/* ── Next deadline & submission ───────────────────────────── */}
+              <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Text className="metric-label">Latest submission</Text>
-                  <Text className="insight-value">
-                    {formatTimestamp(stats.latestSubmittedAt)}
-                  </Text>
+                  <Text className="insight-value">{formatTimestamp(stats.latestSubmittedAt)}</Text>
                 </Card>
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Text className="metric-label">Next ending activity</Text>
-                  <Text className="insight-value">
-                    {formatShortDate(stats.upcomingEndDate)}
-                  </Text>
-                </Card>
-                <Card radius="xl" padding="lg" className="surface-card">
-                  <Text className="metric-label">Unique departments</Text>
-                  <Text className="insight-value">{stats.uniqueDepartments}</Text>
-                </Card>
-                <Card radius="xl" padding="lg" className="surface-card">
-                  <Text className="metric-label">Unique categories</Text>
-                  <Text className="insight-value">{stats.uniqueCategories}</Text>
+                  <Text className="insight-value">{formatShortDate(stats.upcomingEndDate)}</Text>
                 </Card>
               </SimpleGrid>
 
-              <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
-                <Card radius="xl" padding="lg" className="surface-card">
-                  <Text className="metric-label">Overdue</Text>
-                  <Text className="insight-value">{overdueCount}</Text>
-                </Card>
-                <Card radius="xl" padding="lg" className="surface-card">
-                  <Text className="metric-label">Due Soon</Text>
-                  <Text className="insight-value">{dueSoonCount}</Text>
-                </Card>
-                <Card radius="xl" padding="lg" className="surface-card">
-                  <Text className="metric-label">Stale</Text>
-                  <Text className="insight-value">{staleCount}</Text>
-                </Card>
-              </SimpleGrid>
-
+              {/* ── Distributions ────────────────────────────────────────── */}
               <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="md">
-                <DistributionCard
-                  title="Priority mix"
-                  icon={<IconTargetArrow size={18} />}
-                  buckets={stats.priorityCounts}
-                />
-                <DistributionCard
-                  title="Effort mix"
-                  icon={<IconChartBar size={18} />}
-                  buckets={stats.effortCounts}
-                />
-                <DistributionCard
-                  title="Impact mix"
-                  icon={<IconDatabase size={18} />}
-                  buckets={stats.impactCounts}
-                />
+                <DistributionCard title="Priority mix" icon={<IconTargetArrow size={18} />} buckets={stats.priorityCounts} />
+                <DistributionCard title="Effort mix"   icon={<IconChartBar size={18} />}    buckets={stats.effortCounts} />
+                <DistributionCard title="Impact mix"   icon={<IconDatabase size={18} />}    buckets={stats.impactCounts} />
               </SimpleGrid>
 
+              {/* ── Rankings ─────────────────────────────────────────────── */}
               <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="md">
-                <RankingCard
-                  title="Top owners"
-                  caption="Most represented owners in the database"
-                  buckets={stats.topOwners}
-                />
-                <RankingCard
-                  title="Top projects"
-                  caption="Projects most frequently touched by submissions"
-                  buckets={stats.topProjects}
-                />
+                <RankingCard title="Top owners"   caption="Most represented owners in the database"            buckets={stats.topOwners} />
+                <RankingCard title="Top projects" caption="Projects most frequently touched by submissions"    buckets={stats.topProjects} />
               </SimpleGrid>
 
+              {/* ── Footprint ────────────────────────────────────────────── */}
               <Card radius="xl" padding="lg" className="surface-card">
-                <Stack gap="md">
-                  <Group justify="space-between">
-                    <div>
-                      <Text fw={700}>Database footprint</Text>
-                      <Text size="sm" c="dimmed">
-                        Current spread of saved records across people and scope.
-                      </Text>
+                <Group justify="space-between" mb="md">
+                  <div>
+                    <Text fw={700}>Database footprint</Text>
+                    <Text size="sm" c="dimmed">Spread of records across people, scope, and time.</Text>
+                  </div>
+                  <Badge variant="light" color="blue">Live</Badge>
+                </Group>
+                <Divider color="rgba(146,195,208,0.12)" mb="md" />
+                <SimpleGrid cols={{ base: 2, md: 5 }} spacing="md">
+                  {[
+                    { label: 'Active owners',      value: stats.uniqueOwners },
+                    { label: 'Touched projects',   value: stats.uniqueProjects },
+                    { label: 'Departments',        value: stats.uniqueDepartments },
+                    { label: 'Categories',         value: stats.uniqueCategories },
+                    { label: 'Avg duration',       value: `${stats.averageDurationDays}d` },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="footprint-item">
+                      <Text className="metric-label">{label}</Text>
+                      <Text className="footprint-value">{value}</Text>
                     </div>
-                    <Badge variant="light" color="blue">
-                      Live
-                    </Badge>
-                  </Group>
-                  <Divider color="rgba(146, 195, 208, 0.12)" />
-                  <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
-                    <div className="footprint-item">
-                      <Text className="metric-label">Active owners</Text>
-                      <Text className="footprint-value">{stats.uniqueOwners}</Text>
-                    </div>
-                    <div className="footprint-item">
-                      <Text className="metric-label">Touched projects</Text>
-                      <Text className="footprint-value">{stats.uniqueProjects}</Text>
-                    </div>
-                    <div className="footprint-item">
-                      <Text className="metric-label">Average duration</Text>
-                      <Text className="footprint-value">
-                        {stats.averageDurationDays} days
-                      </Text>
-                    </div>
-                  </SimpleGrid>
-                </Stack>
+                  ))}
+                </SimpleGrid>
               </Card>
 
+              {/* ── DB storage info (compact) ─────────────────────────────── */}
               <Card radius="xl" padding="lg" className="surface-card">
-                <Stack gap="md">
-                  <Group justify="space-between" align="flex-start">
-                    <div>
-                      <Text fw={700}>Import and export</Text>
-                      <Text size="sm" c="dimmed">
-                        Export the database as JSON or CSV, or replace it from a JSON file.
-                      </Text>
-                    </div>
-                    <Badge variant="light" color="blue">
-                      Transfer
-                    </Badge>
-                  </Group>
-
-                  <Group gap="sm">
-                    <Button
-                      variant="light"
-                      color="blue"
-                      radius="xl"
-                      onClick={handleExportJson}
-                    >
-                      Export JSON
-                    </Button>
-                    <Button
-                      variant="light"
-                      color="gray"
-                      radius="xl"
-                      onClick={handleExportCsv}
-                    >
-                      Export CSV
-                    </Button>
-                    <Button component="label" variant="default" color="blue" radius="xl">
-                      Import JSON
-                      <input
-                        type="file"
-                        accept="application/json,.json"
-                        hidden
-                        onChange={(event) => {
-                          const file = event.currentTarget.files?.[0]
-                          if (file) {
-                            void handleImportJson(file)
-                          }
-                          event.currentTarget.value = ''
-                        }}
-                      />
-                    </Button>
-                  </Group>
-
-                  {importExportMessage ? (
-                    <Text size="sm" c="dimmed">
-                      {importExportMessage}
-                    </Text>
-                  ) : null}
-
-                  <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-                    <div className="footprint-item">
-                      <Text className="metric-label">Attachment files</Text>
-                      <Text className="footprint-value">
-                        {attachmentStorageStats.fileCount}
-                      </Text>
-                      <Text size="sm" c="dimmed">
-                        Stored outside the JSON database.
-                      </Text>
-                    </div>
-                    <div className="footprint-item">
-                      <Text className="metric-label">Attachment storage</Text>
-                      <Text className="footprint-value">
-                        {formatBytes(attachmentStorageStats.totalSizeBytes)}
-                      </Text>
-                      <Button
-                        variant="subtle"
-                        color="gray"
-                        radius="xl"
-                        size="compact-sm"
-                        mt="xs"
-                        onClick={() => void refreshAttachmentStorageStats()}
-                        loading={isRefreshingAttachmentStats}
-                      >
-                        Refresh storage
-                      </Button>
-                    </div>
-                  </SimpleGrid>
-
-                  <Divider color="rgba(146, 195, 208, 0.12)" />
-
-                  <Stack gap="sm">
-                    <Group justify="space-between" align="center">
-                      <div>
-                        <Text fw={700}>Recent backups</Text>
-                        <Text size="sm" c="dimmed">
-                          Automatic snapshots created before database replacement and restore.
-                        </Text>
-                      </div>
-                      <Button
-                        variant="subtle"
-                        color="gray"
-                        radius="xl"
-                        onClick={() => void refreshBackups()}
-                        loading={isRefreshingBackups}
-                        disabled={isBootstrapping}
-                      >
-                        Refresh backups
-                      </Button>
-                    </Group>
-
-                    {databaseBackups.length === 0 ? (
-                      <Text size="sm" c="dimmed">
-                        No backups found yet. Importing or restoring the database will create one automatically.
-                      </Text>
-                    ) : (
-                      <Stack gap="xs">
-                        {databaseBackups.map((backup) => (
-                          <Card key={backup.path} radius="lg" padding="md" className="surface-card">
-                            <Group justify="space-between" align="flex-start" gap="md">
-                              <div>
-                                <Text fw={700}>{backup.fileName}</Text>
-                                <Text size="sm" c="dimmed">
-                                  Saved {formatTimestamp(backup.modifiedAt)} · {formatBytes(backup.sizeBytes)}
-                                </Text>
-                                <Text size="sm" c="dimmed">
-                                  {backup.path}
-                                </Text>
-                              </div>
-                              <Button
-                                variant="light"
-                                color="blue"
-                                radius="xl"
-                                onClick={() => void handleRestoreBackup(backup)}
-                                loading={isRestoringBackupPath === backup.path}
-                                disabled={
-                                  isBootstrapping ||
-                                  (isRestoringBackupPath !== null &&
-                                    isRestoringBackupPath !== backup.path)
-                                }
-                              >
-                                Restore
-                              </Button>
-                            </Group>
-                          </Card>
-                        ))}
-                      </Stack>
-                    )}
-                  </Stack>
-                </Stack>
+                <Group justify="space-between" mb="sm">
+                  <Text fw={700}>Storage</Text>
+                  <Button variant="subtle" color="gray" radius="xl" size="compact-sm" onClick={() => void refreshAttachmentStorageStats()} loading={isRefreshingAttachmentStats}>
+                    Refresh
+                  </Button>
+                </Group>
+                <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+                  <div className="footprint-item">
+                    <Text className="metric-label">Database path</Text>
+                    <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>{bootstrapData.dbPath}</Text>
+                  </div>
+                  <div className="footprint-item">
+                    <Text className="metric-label">Attachment files</Text>
+                    <Text className="footprint-value">{attachmentStorageStats.fileCount}</Text>
+                  </div>
+                  <div className="footprint-item">
+                    <Text className="metric-label">Attachment storage</Text>
+                    <Text className="footprint-value">{formatBytes(attachmentStorageStats.totalSizeBytes)}</Text>
+                  </div>
+                </SimpleGrid>
               </Card>
             </Stack>
           ) : currentPage === 'form' ? (
@@ -5788,7 +5745,7 @@ function App() {
                   <Select
                     label="Owner"
                     placeholder="Select an owner"
-                    data={bootstrapData.owners}
+                    data={asc(bootstrapData.owners)}
                     size="md"
                     leftSection={<IconUsersGroup size={16} />}
                     required
@@ -5806,7 +5763,7 @@ function App() {
                   <MultiSelect
                     label="Project"
                     placeholder="Select one or more projects"
-                    data={bootstrapData.projects}
+                    data={asc(bootstrapData.projects)}
                     size="md"
                     searchable
                     hidePickedOptions
@@ -5818,7 +5775,7 @@ function App() {
                   <MultiSelect
                     label="Departments"
                     placeholder="Choose the involved departments"
-                    data={bootstrapData.departments}
+                    data={asc(bootstrapData.departments)}
                     size="md"
                     searchable
                     hidePickedOptions
@@ -5830,19 +5787,27 @@ function App() {
                 <MultiSelect
                   label="Category"
                   placeholder="Choose one or more categories"
-                  data={bootstrapData.categories}
+                  data={asc(bootstrapData.categories)}
                   searchable
                   hidePickedOptions
                   required
                   {...form.getInputProps('categories')}
                 />
 
-                <Select
-                  label="Lab Activity"
-                  data={['None', 'Minimal', 'Significant']}
-                  allowDeselect={false}
-                  {...form.getInputProps('labActivity')}
-                />
+                <Group gap="xl">
+                  <Checkbox
+                    label="HW Development"
+                    {...form.getInputProps('hwDevelopment', { type: 'checkbox' })}
+                  />
+                  <Checkbox
+                    label="SW Development"
+                    {...form.getInputProps('swDevelopment', { type: 'checkbox' })}
+                  />
+                  <Checkbox
+                    label="Lab Activity"
+                    {...form.getInputProps('labActivity', { type: 'checkbox' })}
+                  />
+                </Group>
 
                 <div className="form-section-label">
                   <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="form-section-eyebrow">Schedule</Text>
@@ -6149,7 +6114,7 @@ function App() {
                           <Text size="sm" c="dimmed">{bulkSelectedIds.size} selected</Text>
                           <Select
                             placeholder="Move to status…"
-                            data={bootstrapData.statuses}
+                            data={asc(bootstrapData.statuses)}
                             size="xs"
                             radius="xl"
                             w={160}
@@ -6369,7 +6334,7 @@ function App() {
                           <div className="grid-2">
                             <Select
                               label="Owner"
-                              data={bootstrapData.owners}
+                              data={asc(bootstrapData.owners)}
                               value={quickOwner}
                               onChange={setQuickOwner}
                               searchable
@@ -7186,7 +7151,7 @@ function App() {
                 const rec = filteredInsightRecords
                 const completedCount = rec.filter((r) => r.status.toLowerCase() === 'completed').length
                 const openCount = rec.filter((r) => r.status.toLowerCase() === 'open').length
-                const labActiveCount = rec.filter((r) => r.labActivity && r.labActivity !== 'None').length
+                const labActiveCount = rec.filter((r) => r.labActivity || r.hwDevelopment || r.swDevelopment).length
 
                 // status distribution
                 const statusMap: Record<string, number> = {}
@@ -7626,7 +7591,7 @@ function App() {
                         <MultiSelect
                           label="Projects"
                           placeholder="Select projects"
-                          data={bootstrapData.projects}
+                          data={asc(bootstrapData.projects)}
                           {...debugForm.getInputProps('projects')}
                           radius="md"
                           searchable
@@ -7635,7 +7600,7 @@ function App() {
                         <MultiSelect
                           label="Departments"
                           placeholder="Select departments"
-                          data={bootstrapData.departments}
+                          data={asc(bootstrapData.departments)}
                           {...debugForm.getInputProps('departments')}
                           radius="md"
                           searchable
@@ -7665,7 +7630,7 @@ function App() {
                       <MultiSelect
                         label="Category"
                         placeholder="Select categories"
-                        data={debugSettings.categories}
+                        data={asc(debugSettings.categories)}
                         {...debugForm.getInputProps('category')}
                         radius="md"
                       />
@@ -7688,7 +7653,7 @@ function App() {
                       <MultiSelect
                         label="Outcome"
                         placeholder="Select all outcomes that apply"
-                        data={debugSettings.outcomeOptions}
+                        data={asc(debugSettings.outcomeOptions)}
                         {...debugForm.getInputProps('outcome')}
                         radius="md"
                         searchable
@@ -7754,7 +7719,7 @@ function App() {
                       <MultiSelect
                         label="Activity records"
                         placeholder="Search and select activity records to link"
-                        data={records.map((r) => ({ value: r.id, label: `${r.id.slice(0, 8).toUpperCase()} — ${r.title}` }))}
+                        data={[...records].sort((a, b) => a.title.localeCompare(b.title)).map((r) => ({ value: r.id, label: `${r.id.slice(0, 8).toUpperCase()} — ${r.title}` }))}
                         {...debugForm.getInputProps('linkedActivityIds')}
                         radius="md"
                         searchable
@@ -8835,6 +8800,61 @@ function App() {
                       {settingsError}
                     </Text>
                   ) : null}
+                </Stack>
+              </Card>
+
+              <Card radius="xl" padding="lg" className="surface-card">
+                <Stack gap="md">
+                  <Group justify="space-between" align="flex-start">
+                    <div>
+                      <Text fw={700}>Import and export</Text>
+                      <Text size="sm" c="dimmed">
+                        Export the database as JSON or CSV, or replace it from a JSON file.
+                      </Text>
+                    </div>
+                    <Badge variant="light" color="blue">Transfer</Badge>
+                  </Group>
+                  <Group gap="sm">
+                    <Button variant="light" color="blue" radius="xl" onClick={handleExportJson}>Export JSON</Button>
+                    <Button variant="light" color="gray" radius="xl" onClick={handleExportCsv}>Export CSV</Button>
+                    <Button component="label" variant="default" color="blue" radius="xl">
+                      Import JSON
+                      <input type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) { void handleImportJson(file) } event.currentTarget.value = '' }} />
+                    </Button>
+                  </Group>
+                  {importExportMessage ? <Text size="sm" c="dimmed">{importExportMessage}</Text> : null}
+                  <Divider color="rgba(146,195,208,0.12)" />
+                  <Stack gap="sm">
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Text fw={700}>Recent backups</Text>
+                        <Text size="sm" c="dimmed">Automatic snapshots created before database replacement and restore.</Text>
+                      </div>
+                      <Button variant="subtle" color="gray" radius="xl" onClick={() => void refreshBackups()} loading={isRefreshingBackups} disabled={isBootstrapping}>
+                        Refresh backups
+                      </Button>
+                    </Group>
+                    {databaseBackups.length === 0 ? (
+                      <Text size="sm" c="dimmed">No backups found yet. Importing or restoring the database will create one automatically.</Text>
+                    ) : (
+                      <Stack gap="xs">
+                        {databaseBackups.map((backup) => (
+                          <Card key={backup.path} radius="lg" padding="md" className="surface-card">
+                            <Group justify="space-between" align="flex-start" gap="md">
+                              <div>
+                                <Text fw={700}>{backup.fileName}</Text>
+                                <Text size="sm" c="dimmed">Saved {formatTimestamp(backup.modifiedAt)} · {formatBytes(backup.sizeBytes)}</Text>
+                                <Text size="sm" c="dimmed">{backup.path}</Text>
+                              </div>
+                              <Button variant="light" color="blue" radius="xl" onClick={() => void handleRestoreBackup(backup)} loading={isRestoringBackupPath === backup.path} disabled={isBootstrapping || (isRestoringBackupPath !== null && isRestoringBackupPath !== backup.path)}>
+                                Restore
+                              </Button>
+                            </Group>
+                          </Card>
+                        ))}
+                      </Stack>
+                    )}
+                  </Stack>
                 </Stack>
               </Card>
 
