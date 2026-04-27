@@ -1004,6 +1004,52 @@
   gap: 0.7rem;
 }
 
+.todo-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(16rem, 1fr) minmax(10rem, 14rem) minmax(10rem, 14rem);
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.todo-editor-grid.compact {
+  grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 12rem) minmax(9rem, 12rem);
+}
+
+.todo-list,
+.todo-page-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--jira-border);
+  border-radius: 0.8rem;
+  background: var(--jira-surface-soft);
+}
+
+.todo-item.completed {
+  opacity: 0.68;
+}
+
+.todo-item.completed .todo-item-main {
+  text-decoration: line-through;
+}
+
+.todo-item-main {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.todo-page-item {
+  border-left: 3px solid var(--jira-accent);
+}
+
 .mention-token {
   display: inline-flex;
   align-items: center;
@@ -1320,6 +1366,8 @@
   .filter-grid-wide,
   .insights-filter-grid,
   .record-meta-grid,
+  .todo-editor-grid,
+  .todo-editor-grid.compact,
   .grid-2,
   .grid-3 {
     grid-template-columns: 1fr;
@@ -1337,6 +1385,10 @@
   .admin-item-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .todo-item {
+    flex-direction: column;
   }
 
   .admin-item-row,

@@ -18,6 +18,7 @@ import type {
   SettingsRelabelPayload,
   StatsFilters,
   SubmitResult,
+  TodoPayload,
   TrackerSettings,
   UpdateCommentPayload,
 } from './types'
@@ -173,6 +174,37 @@ export async function deleteActivityComment(
   return invoke<SubmitResult>('delete_activity_comment', {
     recordId,
     commentId,
+    expectedLastModifiedAt: expectedLastModifiedAt ?? null,
+  })
+}
+
+export async function appendActivityTodo(
+  recordId: string,
+  payload: TodoPayload,
+) {
+  return invoke<SubmitResult>('append_activity_todo', { recordId, payload })
+}
+
+export async function updateActivityTodo(
+  recordId: string,
+  todoId: string,
+  payload: TodoPayload,
+) {
+  return invoke<SubmitResult>('update_activity_todo', {
+    recordId,
+    todoId,
+    payload,
+  })
+}
+
+export async function deleteActivityTodo(
+  recordId: string,
+  todoId: string,
+  expectedLastModifiedAt?: string | null,
+) {
+  return invoke<SubmitResult>('delete_activity_todo', {
+    recordId,
+    todoId,
     expectedLastModifiedAt: expectedLastModifiedAt ?? null,
   })
 }

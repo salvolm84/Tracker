@@ -1,4 +1,4 @@
-import React, { startTransition, useEffect, useEffectEvent, useRef, useState } from 'react'
+import React, { startTransition, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon,
   Alert,
@@ -77,8 +77,10 @@ import dayjs from 'dayjs'
 import isoWeek from 'dayjs/plugin/isoWeek'
 import {
   appendActivityComment,
+  appendActivityTodo,
   defaultTrackerSettings,
   deleteActivityComment,
+  deleteActivityTodo,
   deleteDebugRecord,
   getActivityRecords,
   bootstrapForm,
@@ -99,6 +101,7 @@ import {
   submitDebugRecord,
   updateActivity,
   updateActivityComment,
+  updateActivityTodo,
   updateDebugRecord,
   updateDebugSettings,
   updateTrackerSettings,
@@ -131,6 +134,7 @@ import type {
   QuickUpdatePayload,
   RecordComment,
   RecordHistoryEntry,
+  RecordTodo,
   StatsFilters,
   TrackerSettings,
 } from './types'
@@ -178,7 +182,7 @@ function lessonCategoryMeta(category: string) {
   return LESSON_CATEGORIES.find((c) => c.value === category) ?? LESSON_CATEGORIES[0]
 }
 
-type PageKey = 'overview' | 'form' | 'records' | 'board' | 'insights' | 'weekly' | 'admin' | 'debug-list' | 'debug-form' | 'debug-insights' | 'debug-admin'
+type PageKey = 'overview' | 'form' | 'records' | 'todo' | 'board' | 'insights' | 'weekly' | 'admin' | 'debug-list' | 'debug-form' | 'debug-insights' | 'debug-admin'
 type ActiveModule = 'activity' | 'debug'
 type WeeklyReportMode = 'week' | 'range'
 type WeeklyTemplate = 'bullets' | 'executive' | 'owner' | 'project'
@@ -327,10 +331,11 @@ const pageShortcutMap: Record<PageKey, string> = {
   overview: '1',
   form: '2',
   records: '3',
-  board: '4',
-  insights: '5',
-  weekly: '6',
-  admin: '7',
+  todo: '4',
+  board: '5',
+  insights: '6',
+  weekly: '7',
+  admin: '8',
   'debug-list': '',
   'debug-form': '',
   'debug-insights': '',
@@ -341,6 +346,7 @@ const orderedPages: PageKey[] = [
   'overview',
   'form',
   'records',
+  'todo',
   'board',
   'insights',
   'weekly',
@@ -1748,6 +1754,8 @@ function App() {
   const adminPasswordRef = useRef<HTMLInputElement>(null)
   const dragCardRef = useRef<{ recordId: string; ghostEl: HTMLDivElement; grabOffsetX: number; grabOffsetY: number } | null>(null)
   const boardRecordsRef = useRef<ActivityRecord[]>([])
+  const recordItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const pendingRecordJumpRef = useRef<string | null>(null)
   const [currentPage, setCurrentPage] = useState<PageKey>('overview')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false)
@@ -1799,8 +1807,10 @@ function App() {
   const [isSaving, setIsSaving] = useState(false)
   const [isQuickSaving, setIsQuickSaving] = useState(false)
   const [isSavingComment, setIsSavingComment] = useState(false)
+  const [isSavingTodo, setIsSavingTodo] = useState(false)
   const [isRestoringBackupPath, setIsRestoringBackupPath] = useState<string | null>(null)
   const [isDeletingCommentId, setIsDeletingCommentId] = useState<string | null>(null)
+  const [isDeletingTodoId, setIsDeletingTodoId] = useState<string | null>(null)
   const [activeModule, setActiveModule] = useState<ActiveModule>('activity')
   const [debugRecords, setDebugRecords] = useState<DebugRecord[]>([])
   const [debugSettings, setDebugSettings] = useState<DebugSettings>({
@@ -1886,11 +1896,19 @@ function App() {
   const [commentError, setCommentError] = useState<string | null>(null)
   const [commentMessage, setCommentMessage] = useState('')
   const [commentAttachments, setCommentAttachments] = useState<AttachmentPayload[]>([])
+  const [todoError, setTodoError] = useState<string | null>(null)
+  const [todoText, setTodoText] = useState('')
+  const [todoOwner, setTodoOwner] = useState<string | null>(null)
+  const [todoDueDate, setTodoDueDate] = useState<string | null>(null)
   const [areCommentsCollapsed, setAreCommentsCollapsed] = useState(true)
   const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(true)
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
   const [editingCommentMessage, setEditingCommentMessage] = useState('')
   const [editingCommentCreatedAt, setEditingCommentCreatedAt] = useState('')
+  const [editingTodoId, setEditingTodoId] = useState<string | null>(null)
+  const [editingTodoText, setEditingTodoText] = useState('')
+  const [editingTodoOwner, setEditingTodoOwner] = useState<string | null>(null)
+  const [editingTodoDueDate, setEditingTodoDueDate] = useState<string | null>(null)
   const [previewAttachmentKey, setPreviewAttachmentKey] = useState<string | null>(null)
   const [previewAttachmentDataByKey, setPreviewAttachmentDataByKey] =
     useState<Record<string, AttachmentData>>({})
@@ -2308,10 +2326,28 @@ function App() {
       (debugFilters.outcomes.length === 0 || (r.outcome ?? []).some((o) => debugFilters.outcomes.includes(o)))
     )
   })
-  const recordsListDisplay = [
-    ...filteredRecords.filter((r) => pinnedRecordIds.has(r.id)),
-    ...filteredRecords.filter((r) => !pinnedRecordIds.has(r.id)),
-  ]
+  const recordsListDisplay = useMemo(
+    () => [
+      ...filteredRecords.filter((r) => pinnedRecordIds.has(r.id)),
+      ...filteredRecords.filter((r) => !pinnedRecordIds.has(r.id)),
+    ],
+    [filteredRecords, pinnedRecordIds],
+  )
+  const openTodoItems = useMemo(
+    () =>
+      records
+        .flatMap((record) =>
+          (record.todos ?? [])
+            .filter((todo) => !todo.completed)
+            .map((todo) => ({ record, todo })),
+        )
+        .sort((left, right) => {
+          const leftDue = left.todo.dueDate || '9999-12-31'
+          const rightDue = right.todo.dueDate || '9999-12-31'
+          return leftDue.localeCompare(rightDue) || left.record.title.localeCompare(right.record.title)
+        }),
+    [records],
+  )
   const activeFilterGroups = [
     {
       label: 'Search',
@@ -2400,6 +2436,16 @@ function App() {
     filteredRecords.find((record) => record.id === selectedRecordId) ?? null
   const selectedRecordComments = selectedRecord
     ? sortedComments(selectedRecord.comments)
+    : []
+  const selectedRecordTodos = selectedRecord
+    ? [...(selectedRecord.todos ?? [])].sort((left, right) => {
+        if (left.completed !== right.completed) {
+          return left.completed ? 1 : -1
+        }
+        const leftDue = left.dueDate || '9999-12-31'
+        const rightDue = right.dueDate || '9999-12-31'
+        return leftDue.localeCompare(rightDue) || right.createdAt.localeCompare(left.createdAt)
+      })
     : []
   const selectedRecordHistory = selectedRecord
     ? [...selectedRecord.history].sort(
@@ -2760,20 +2806,51 @@ function App() {
         ;(el as HTMLElement).style.outline = ''
       })
     }
+  // The board drag listeners need one document-level binding while the board is mounted.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage])
 
   useEffect(() => {
     setCommentMessage('')
     setCommentAttachments([])
     setCommentError(null)
+    setTodoText('')
+    setTodoDueDate(null)
+    setTodoError(null)
     setEditingCommentId(null)
     setEditingCommentMessage('')
+    setEditingTodoId(null)
+    setEditingTodoText('')
+    setEditingTodoOwner(null)
+    setEditingTodoDueDate(null)
     setAreCommentsCollapsed(true)
     setIsHistoryCollapsed(true)
     setPreviewAttachmentKey(null)
     setPreviewAttachmentDataByKey({})
     setLoadingAttachmentKey(null)
   }, [selectedRecordId])
+
+  useEffect(() => {
+    if (currentPage !== 'records' || !selectedRecordId) {
+      return
+    }
+
+    if (pendingRecordJumpRef.current !== selectedRecordId) {
+      return
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      recordItemRefs.current.get(selectedRecordId)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+      if (pendingRecordJumpRef.current === selectedRecordId) {
+        pendingRecordJumpRef.current = null
+      }
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [currentPage, selectedRecordId, recordsListDisplay])
 
   useEffect(() => {
     window.localStorage.setItem(savedViewsStorageKey, JSON.stringify(savedViews))
@@ -2825,6 +2902,7 @@ function App() {
   useEffect(() => {
     setQuickOwner(selectedRecord?.owner ?? null)
     setQuickStatus(selectedRecord?.status ?? null)
+    setTodoOwner(selectedRecord?.owner ?? null)
   }, [selectedRecord])
 
   useEffect(() => {
@@ -2886,7 +2964,7 @@ function App() {
       return
     }
 
-    if (/^[1-7]$/.test(event.key)) {
+    if (/^[1-8]$/.test(event.key)) {
       const nextPage = orderedPages[Number(event.key) - 1]
       if (nextPage) {
         event.preventDefault()
@@ -3669,6 +3747,248 @@ function App() {
     }
   }
 
+  function todoPayloadFromDraft(completed?: boolean | null) {
+    return {
+      text: todoText.trim(),
+      owner: todoOwner,
+      dueDate: todoDueDate,
+      completed,
+    }
+  }
+
+  function editingTodoPayloadFromDraft(completed?: boolean | null) {
+    return {
+      text: editingTodoText.trim(),
+      owner: editingTodoOwner,
+      dueDate: editingTodoDueDate,
+      completed,
+    }
+  }
+
+  async function handleAppendTodo() {
+    if (!selectedRecord) {
+      return
+    }
+
+    const payload = todoPayloadFromDraft(false)
+    if (!payload.text) {
+      setTodoError('Todo text is required.')
+      return
+    }
+    if (!payload.owner) {
+      setTodoError('Select an owner for this todo.')
+      return
+    }
+
+    setIsSavingTodo(true)
+    setTodoError(null)
+    setStatusTone('info')
+    setStatusMessage('Adding a todo to the selected record...')
+
+    try {
+      const result = await appendActivityTodo(selectedRecord.id, {
+        text: payload.text,
+        owner: payload.owner,
+        dueDate: payload.dueDate,
+        completed: payload.completed,
+        expectedLastModifiedAt: recordConcurrencyToken(selectedRecord),
+      })
+
+      startTransition(() => {
+        setBootstrapData((current) => ({
+          ...current,
+          dbPath: result.dbPath,
+          dbRevision: result.dbRevision,
+          recordCount: result.recordCount,
+        }))
+        setStatusTone('success')
+        setStatusMessage('Todo added successfully.')
+        notifications.show({
+          color: 'teal',
+          title: 'Todo added',
+          message: 'Todo has been saved to the record.',
+          autoClose: 3000,
+        })
+      })
+
+      await refreshRecords({ silent: true })
+      setTodoText('')
+      setTodoDueDate(null)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to add the todo'
+
+      if (isConcurrencyConflictMessage(message)) {
+        await refreshRecords({ silent: true })
+      }
+
+      startTransition(() => {
+        setStatusTone('error')
+        setStatusMessage(message)
+        notifications.show({
+          color: 'red',
+          title: 'Todo failed',
+          message,
+          autoClose: 6000,
+        })
+      })
+    } finally {
+      setIsSavingTodo(false)
+    }
+  }
+
+  function startEditingTodo(todo: RecordTodo) {
+    setEditingTodoId(todo.id)
+    setEditingTodoText(todo.text)
+    setEditingTodoOwner(todo.owner)
+    setEditingTodoDueDate(todo.dueDate || null)
+    setTodoError(null)
+  }
+
+  function cancelEditingTodo() {
+    setEditingTodoId(null)
+    setEditingTodoText('')
+    setEditingTodoOwner(null)
+    setEditingTodoDueDate(null)
+    setTodoError(null)
+  }
+
+  async function handleSaveEditedTodo(record: ActivityRecord, todo: RecordTodo, completed = todo.completed) {
+    const payload = editingTodoId === todo.id
+      ? editingTodoPayloadFromDraft(completed)
+      : {
+          text: todo.text,
+          owner: todo.owner,
+          dueDate: todo.dueDate,
+          completed,
+        }
+
+    if (!payload.text) {
+      setTodoError('Todo text is required.')
+      return
+    }
+    if (!payload.owner) {
+      setTodoError('Select an owner for this todo.')
+      return
+    }
+
+    setIsSavingTodo(true)
+    setTodoError(null)
+    setStatusTone('info')
+    setStatusMessage('Saving the todo...')
+
+    try {
+      const result = await updateActivityTodo(record.id, todo.id, {
+        text: payload.text,
+        owner: payload.owner,
+        dueDate: payload.dueDate,
+        completed: payload.completed,
+        expectedLastModifiedAt: recordConcurrencyToken(record),
+      })
+
+      startTransition(() => {
+        setBootstrapData((current) => ({
+          ...current,
+          dbPath: result.dbPath,
+          dbRevision: result.dbRevision,
+          recordCount: result.recordCount,
+        }))
+        setStatusTone('success')
+        setStatusMessage(completed ? 'Todo completed.' : 'Todo updated.')
+        notifications.show({
+          color: 'teal',
+          title: completed ? 'Todo completed' : 'Todo updated',
+          message: 'Your todo change has been saved.',
+          autoClose: 3000,
+        })
+      })
+
+      await refreshRecords({ silent: true })
+      if (editingTodoId === todo.id) {
+        cancelEditingTodo()
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to update the todo'
+
+      if (isConcurrencyConflictMessage(message)) {
+        await refreshRecords({ silent: true })
+      }
+
+      startTransition(() => {
+        setStatusTone('error')
+        setStatusMessage(message)
+        notifications.show({
+          color: 'red',
+          title: 'Todo update failed',
+          message,
+          autoClose: 6000,
+        })
+      })
+    } finally {
+      setIsSavingTodo(false)
+    }
+  }
+
+  async function handleDeleteTodo(record: ActivityRecord, todo: RecordTodo) {
+    const shouldDelete = window.confirm('Delete this todo permanently from the selected record?')
+    if (!shouldDelete) {
+      return
+    }
+
+    setIsDeletingTodoId(todo.id)
+    setTodoError(null)
+    setStatusTone('info')
+    setStatusMessage('Deleting the selected todo...')
+
+    try {
+      const result = await deleteActivityTodo(
+        record.id,
+        todo.id,
+        recordConcurrencyToken(record),
+      )
+
+      startTransition(() => {
+        setBootstrapData((current) => ({
+          ...current,
+          dbPath: result.dbPath,
+          dbRevision: result.dbRevision,
+          recordCount: result.recordCount,
+        }))
+        setStatusTone('success')
+        setStatusMessage('Todo deleted.')
+        notifications.show({
+          color: 'teal',
+          title: 'Todo deleted',
+          message: 'The todo has been removed from the record.',
+          autoClose: 3000,
+        })
+      })
+
+      await refreshRecords({ silent: true })
+      if (editingTodoId === todo.id) {
+        cancelEditingTodo()
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to delete the todo'
+
+      if (isConcurrencyConflictMessage(message)) {
+        await refreshRecords({ silent: true })
+      }
+
+      startTransition(() => {
+        setStatusTone('error')
+        setStatusMessage(message)
+        notifications.show({
+          color: 'red',
+          title: 'Delete failed',
+          message,
+          autoClose: 6000,
+        })
+      })
+    } finally {
+      setIsDeletingTodoId(null)
+    }
+  }
+
   async function handleQuickUpdateRecord(
     record: ActivityRecord,
     payload: QuickUpdatePayload,
@@ -4057,6 +4377,12 @@ function App() {
       return
     }
     setCurrentPage(page)
+  }
+
+  function jumpToRecord(recordId: string) {
+    pendingRecordJumpRef.current = recordId
+    setSelectedRecordId(recordId)
+    navigateToPage('records')
   }
 
   function downloadTextFile(fileName: string, content: string, mimeType: string) {
@@ -4742,6 +5068,29 @@ function App() {
                 </button>
               </Tooltip>
 
+              <Tooltip label="TODO — Open action items" position="right" disabled={!isSidebarCollapsed}>
+                <button
+                  type="button"
+                  className={`page-link ${currentPage === 'todo' ? 'active' : ''}`}
+                  onClick={() => navigateToPage('todo')}
+                >
+                  <span className="page-link-icon">
+                    <IconCheck size={18} />
+                  </span>
+                  <span>
+                    <strong>TODO</strong>
+                    <small>Open action items</small>
+                  </span>
+                  {openTodoItems.length > 0 && !isSidebarCollapsed ? (
+                    <Badge size="xs" variant="filled" color="blue" radius="xl" className="page-link-shortcut">
+                      {openTodoItems.length}
+                    </Badge>
+                  ) : (
+                    <span className="page-link-shortcut">4</span>
+                  )}
+                </button>
+              </Tooltip>
+
               <Tooltip label="Board — Kanban by status" position="right" disabled={!isSidebarCollapsed}>
                 <button
                   type="button"
@@ -4755,7 +5104,7 @@ function App() {
                     <strong>Board</strong>
                     <small>Kanban by status</small>
                   </span>
-                  <span className="page-link-shortcut">4</span>
+                  <span className="page-link-shortcut">5</span>
                 </button>
               </Tooltip>
 
@@ -4772,7 +5121,7 @@ function App() {
                     <strong>Insights</strong>
                     <small>Charts and trends</small>
                   </span>
-                  <span className="page-link-shortcut">5</span>
+                  <span className="page-link-shortcut">6</span>
                 </button>
               </Tooltip>
 
@@ -4789,7 +5138,7 @@ function App() {
                     <strong>Weekly</strong>
                     <small>Email-ready report</small>
                   </span>
-                  <span className="page-link-shortcut">6</span>
+                  <span className="page-link-shortcut">7</span>
                 </button>
               </Tooltip>
 
@@ -4806,7 +5155,7 @@ function App() {
                     <strong>Admin</strong>
                     <small>Manage tracker settings</small>
                   </span>
-                  <span className="page-link-shortcut">7</span>
+                  <span className="page-link-shortcut">8</span>
                 </button>
               </Tooltip>
             </div>
@@ -5008,6 +5357,22 @@ function App() {
                   <pre className="json-preview">
                     {JSON.stringify(previewPayload, null, 2)}
                   </pre>
+                </Stack>
+              </Card>
+            ) : !isSidebarCollapsed && currentPage === 'todo' ? (
+              <Card radius="xl" padding="lg" className="surface-card">
+                <Stack gap="sm">
+                  <Group gap="xs">
+                    <IconCheck size={18} />
+                    <Text fw={700}>TODO scope</Text>
+                  </Group>
+                  <Text fw={700}>
+                    {openTodoItems.length} open item
+                    {openTodoItems.length === 1 ? '' : 's'}
+                  </Text>
+                  <Text size="sm" c="dimmed">
+                    Sorted by due date, with undated items last.
+                  </Text>
                 </Stack>
               </Card>
             ) : !isSidebarCollapsed && currentPage === 'board' ? (
@@ -6168,6 +6533,13 @@ function App() {
                         {recordsListDisplay.map((record) => (
                           <div
                             key={record.id}
+                            ref={(node) => {
+                              if (node) {
+                                recordItemRefs.current.set(record.id, node)
+                              } else {
+                                recordItemRefs.current.delete(record.id)
+                              }
+                            }}
                             className={`record-item ${selectedRecordId === record.id ? 'active' : ''} ${pinnedRecordIds.has(record.id) ? 'pinned' : ''}`}
                           >
                             {isBulkMode ? (
@@ -6228,6 +6600,9 @@ function App() {
                                   <span>
                                     {record.attachments.length} file
                                     {record.attachments.length === 1 ? '' : 's'}
+                                  </span>
+                                  <span>
+                                    {(record.todos ?? []).filter((todo) => !todo.completed).length} TODO
                                   </span>
                                 </div>
                               </div>
@@ -6410,6 +6785,8 @@ function App() {
                             {selectedRecord.attachments.length === 1 ? '' : 's'} ·{' '}
                             {selectedRecord.comments.length} comment
                             {selectedRecord.comments.length === 1 ? '' : 's'}
+                            {' · '}
+                            {(selectedRecord.todos ?? []).filter((todo) => !todo.completed).length} open TODO
                           </Text>
                           <Text size="sm" c="dimmed">
                             {selectedRecord.categories.join(', ')}
@@ -6529,6 +6906,168 @@ function App() {
                           </Stack>
                         </Card>
                       ) : null}
+
+                      <Card radius="xl" padding="lg" className="record-description-card">
+                        <Stack gap="md">
+                          <Group justify="space-between" align="flex-start">
+                            <div>
+                              <Text fw={700}>TODO</Text>
+                              <Text size="sm" c="dimmed">
+                                Add one-line follow-ups with an owner and optional due date.
+                              </Text>
+                            </div>
+                            <Badge variant="light" color="blue">
+                              {selectedRecordTodos.filter((todo) => !todo.completed).length} open
+                            </Badge>
+                          </Group>
+
+                          <div className="todo-editor-grid">
+                            <TextInput
+                              label="Todo"
+                              placeholder="One-line action item"
+                              value={todoText}
+                              onChange={(event) => {
+                                setTodoText(event.currentTarget.value)
+                                setTodoError(null)
+                              }}
+                            />
+                            <Select
+                              label="Owner"
+                              data={asc(bootstrapData.owners)}
+                              value={todoOwner}
+                              onChange={(value) => {
+                                setTodoOwner(value)
+                                setTodoError(null)
+                              }}
+                              searchable
+                            />
+                            <DateInput
+                              label="Due date"
+                              placeholder="Optional"
+                              valueFormat="DD MMM YYYY"
+                              clearable
+                              value={todoDueDate}
+                              onChange={setTodoDueDate}
+                            />
+                          </div>
+
+                          {todoError ? (
+                            <Text className="attachment-error">{todoError}</Text>
+                          ) : null}
+
+                          <div className="comment-actions">
+                            <Text className="submit-note">
+                              Completed TODOs stay attached to the record history.
+                            </Text>
+                            <Button
+                              type="button"
+                              radius="xl"
+                              color="blue"
+                              onClick={() => void handleAppendTodo()}
+                              loading={isSavingTodo}
+                              disabled={isBootstrapping}
+                            >
+                              Add todo
+                            </Button>
+                          </div>
+
+                          {selectedRecordTodos.length === 0 ? (
+                            <Text size="sm" c="dimmed">No TODO items yet.</Text>
+                          ) : (
+                            <div className="todo-list">
+                              {selectedRecordTodos.map((todo) => {
+                                const isEditing = editingTodoId === todo.id
+                                return (
+                                  <div className={`todo-item ${todo.completed ? 'completed' : ''}`} key={todo.id}>
+                                    <Checkbox
+                                      checked={todo.completed}
+                                      onChange={(event) =>
+                                        void handleSaveEditedTodo(selectedRecord, todo, event.currentTarget.checked)
+                                      }
+                                      disabled={isSavingTodo}
+                                    />
+                                    <div className="todo-item-main">
+                                      {isEditing ? (
+                                        <div className="todo-editor-grid compact">
+                                          <TextInput
+                                            label="Todo"
+                                            value={editingTodoText}
+                                            onChange={(event) => setEditingTodoText(event.currentTarget.value)}
+                                          />
+                                          <Select
+                                            label="Owner"
+                                            data={asc(bootstrapData.owners)}
+                                            value={editingTodoOwner}
+                                            onChange={setEditingTodoOwner}
+                                            searchable
+                                          />
+                                          <DateInput
+                                            label="Due date"
+                                            placeholder="Optional"
+                                            valueFormat="DD MMM YYYY"
+                                            clearable
+                                            value={editingTodoDueDate}
+                                            onChange={setEditingTodoDueDate}
+                                          />
+                                        </div>
+                                      ) : (
+                                        <>
+                                          <Text fw={600}>{todo.text}</Text>
+                                          <div className="record-row-meta">
+                                            <span>{todo.owner}</span>
+                                            <span>{todo.dueDate ? `Due ${formatShortDate(todo.dueDate)}` : 'No due date'}</span>
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
+                                    <Group gap={4} wrap="nowrap">
+                                      {isEditing ? (
+                                        <>
+                                          <ActionIcon
+                                            variant="subtle"
+                                            color="green"
+                                            onClick={() => void handleSaveEditedTodo(selectedRecord, todo)}
+                                            loading={isSavingTodo}
+                                            aria-label="Save todo"
+                                          >
+                                            <IconCheck size={16} />
+                                          </ActionIcon>
+                                          <ActionIcon
+                                            variant="subtle"
+                                            color="gray"
+                                            onClick={cancelEditingTodo}
+                                            aria-label="Cancel todo edit"
+                                          >
+                                            <IconX size={16} />
+                                          </ActionIcon>
+                                        </>
+                                      ) : (
+                                        <ActionIcon
+                                          variant="subtle"
+                                          color="gray"
+                                          onClick={() => startEditingTodo(todo)}
+                                          aria-label="Edit todo"
+                                        >
+                                          <IconEdit size={16} />
+                                        </ActionIcon>
+                                      )}
+                                      <ActionIcon
+                                        variant="subtle"
+                                        color="red"
+                                        onClick={() => void handleDeleteTodo(selectedRecord, todo)}
+                                        loading={isDeletingTodoId === todo.id}
+                                        aria-label="Delete todo"
+                                      >
+                                        <IconTrash size={16} />
+                                      </ActionIcon>
+                                    </Group>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </Stack>
+                      </Card>
 
                       <Card radius="xl" padding="lg" className="record-description-card">
                         <Stack gap="md">
@@ -6989,6 +7528,162 @@ function App() {
                 </Card>
               </div>
             </Stack>
+          ) : currentPage === 'todo' ? (
+            <Stack gap="lg">
+              <div className="section-header">
+                <div>
+                  <Text className="eyebrow">TODO</Text>
+                  <Title order={2} className="form-title">
+                    Open action items
+                  </Title>
+                  <Text className="form-copy">
+                    Review and update every open TODO across activity records in one place.
+                  </Text>
+                </div>
+
+                <Group gap="sm">
+                  <Badge variant="light" color="blue" radius="xl">
+                    {openTodoItems.length} open
+                  </Badge>
+                  <Button
+                    variant="light"
+                    color="blue"
+                    radius="xl"
+                    onClick={() => void refreshRecords()}
+                    loading={isRefreshingRecords}
+                    disabled={isBootstrapping}
+                  >
+                    Refresh
+                  </Button>
+                </Group>
+              </div>
+
+              {openTodoItems.length === 0 ? (
+                <Card radius="xl" padding="lg" className="surface-card">
+                  <Stack gap="xs" align="center">
+                    <IconCheck size={32} opacity={0.35} />
+                    <Text fw={700}>No open TODO items</Text>
+                    <Text size="sm" c="dimmed">Open action items created inside records will appear here.</Text>
+                  </Stack>
+                </Card>
+              ) : (
+                <div className="todo-page-list">
+                  {openTodoItems.map(({ record, todo }) => {
+                    const isEditing = editingTodoId === todo.id
+                    return (
+                      <Card radius="xl" padding="lg" className="surface-card todo-page-item" key={`${record.id}-${todo.id}`}>
+                        <Stack gap="md">
+                          <Group justify="space-between" align="flex-start">
+                            <div>
+                              <Text className="record-row-key">{formatRecordKey(record.id)}</Text>
+                              <Text fw={700}>{record.title}</Text>
+                              <Text size="sm" c="dimmed">
+                                {record.owner} · {record.status} · {record.projects.join(', ') || 'No project'}
+                              </Text>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="subtle"
+                              color="blue"
+                              radius="xl"
+                              size="compact-sm"
+                              onClick={() => jumpToRecord(record.id)}
+                            >
+                              Open record
+                            </Button>
+                          </Group>
+
+                          <div className="todo-item">
+                            <Checkbox
+                              checked={todo.completed}
+                              onChange={(event) =>
+                                void handleSaveEditedTodo(record, todo, event.currentTarget.checked)
+                              }
+                              disabled={isSavingTodo}
+                            />
+                            <div className="todo-item-main">
+                              {isEditing ? (
+                                <div className="todo-editor-grid compact">
+                                  <TextInput
+                                    label="Todo"
+                                    value={editingTodoText}
+                                    onChange={(event) => setEditingTodoText(event.currentTarget.value)}
+                                  />
+                                  <Select
+                                    label="Owner"
+                                    data={asc(bootstrapData.owners)}
+                                    value={editingTodoOwner}
+                                    onChange={setEditingTodoOwner}
+                                    searchable
+                                  />
+                                  <DateInput
+                                    label="Due date"
+                                    placeholder="Optional"
+                                    valueFormat="DD MMM YYYY"
+                                    clearable
+                                    value={editingTodoDueDate}
+                                    onChange={setEditingTodoDueDate}
+                                  />
+                                </div>
+                              ) : (
+                                <>
+                                  <Text fw={600}>{todo.text}</Text>
+                                  <div className="record-row-meta">
+                                    <span>{todo.owner}</span>
+                                    <span>{todo.dueDate ? `Due ${formatShortDate(todo.dueDate)}` : 'No due date'}</span>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                            <Group gap={4} wrap="nowrap">
+                              {isEditing ? (
+                                <>
+                                  <ActionIcon
+                                    variant="subtle"
+                                    color="green"
+                                    onClick={() => void handleSaveEditedTodo(record, todo)}
+                                    loading={isSavingTodo}
+                                    aria-label="Save todo"
+                                  >
+                                    <IconCheck size={16} />
+                                  </ActionIcon>
+                                  <ActionIcon
+                                    variant="subtle"
+                                    color="gray"
+                                    onClick={cancelEditingTodo}
+                                    aria-label="Cancel todo edit"
+                                  >
+                                    <IconX size={16} />
+                                  </ActionIcon>
+                                </>
+                              ) : (
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="gray"
+                                  onClick={() => startEditingTodo(todo)}
+                                  aria-label="Edit todo"
+                                >
+                                  <IconEdit size={16} />
+                                </ActionIcon>
+                              )}
+                              <ActionIcon
+                                variant="subtle"
+                                color="red"
+                                onClick={() => void handleDeleteTodo(record, todo)}
+                                loading={isDeletingTodoId === todo.id}
+                                aria-label="Delete todo"
+                              >
+                                <IconTrash size={16} />
+                              </ActionIcon>
+                            </Group>
+                          </div>
+                        </Stack>
+                      </Card>
+                    )
+                  })}
+                </div>
+              )}
+            </Stack>
           ) : currentPage === 'board' ? (
             <Stack gap="lg">
               <div className="section-header">
@@ -7070,6 +7765,10 @@ function App() {
                               onMouseDown={(e) => {
                                 if (e.button !== 0) return
                                 e.preventDefault()
+                                if (e.detail >= 2) {
+                                  jumpToRecord(record.id)
+                                  return
+                                }
                                 const cardEl = e.currentTarget as HTMLElement
                                 const rect = cardEl.getBoundingClientRect()
                                 const grabOffsetX = e.clientX - rect.left
@@ -7093,8 +7792,10 @@ function App() {
                               }}
                               onClick={() => {
                                 if (draggingRecordId) return
-                                setSelectedRecordId(record.id)
-                                setCurrentPage('records')
+                                jumpToRecord(record.id)
+                              }}
+                              onDoubleClick={() => {
+                                jumpToRecord(record.id)
                               }}
                             >
                               <div className="board-card-head">

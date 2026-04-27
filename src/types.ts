@@ -100,6 +100,17 @@ export interface RecordComment {
   attachments: AttachmentPayload[]
 }
 
+export interface RecordTodo {
+  id: string
+  createdAt: string
+  updatedAt: string
+  text: string
+  owner: string
+  dueDate: string
+  completed: boolean
+  completedAt: string
+}
+
 export interface ActivityRecord {
   id: string
   submittedAt: string
@@ -118,6 +129,7 @@ export interface ActivityRecord {
   categories: string[]
   attachments: AttachmentPayload[]
   comments: RecordComment[]
+  todos?: RecordTodo[]
   history: RecordHistoryEntry[]
   lastModifiedAt: string
   labActivity: boolean
@@ -177,6 +189,14 @@ export interface UpdateCommentPayload {
   message: string
   createdAt?: string | null
   attachments?: AttachmentPayload[]
+  expectedLastModifiedAt?: string | null
+}
+
+export interface TodoPayload {
+  text: string
+  owner: string
+  dueDate?: string | null
+  completed?: boolean | null
   expectedLastModifiedAt?: string | null
 }
 

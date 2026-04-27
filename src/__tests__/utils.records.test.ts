@@ -377,7 +377,7 @@ describe('normalizeFilters', () => {
   })
 
   it('removes status filters no longer in settings', () => {
-    const filters = { ...emptyFilters, statuses: ['Open', 'Halted'] as any }
+    const filters: StatsFilters = { ...emptyFilters, statuses: ['Open', 'Halted'] }
     const normalized = normalizeFilters(filters, settings)
     expect(normalized.statuses).toEqual(['Open'])
   })

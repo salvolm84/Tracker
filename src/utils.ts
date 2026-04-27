@@ -176,6 +176,7 @@ export function matchesSharedFilters(record: ActivityRecord, filters: StatsFilte
     record.departments.some((d) => d.toLowerCase().includes(searchTerm)) ||
     record.categories.some((c) => c.toLowerCase().includes(searchTerm)) ||
     record.comments.some((c) => c.message.toLowerCase().includes(searchTerm)) ||
+    (record.todos ?? []).some((todo) => todo.text.toLowerCase().includes(searchTerm) || todo.owner.toLowerCase().includes(searchTerm)) ||
     record.history.some((e) => e.message.toLowerCase().includes(searchTerm))
 
   return (

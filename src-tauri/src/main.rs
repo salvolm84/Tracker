@@ -212,6 +212,19 @@ struct CommentInput {
     expected_last_modified_at: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TodoInput {
+    text: String,
+    owner: String,
+    #[serde(default)]
+    due_date: Option<String>,
+    #[serde(default)]
+    completed: Option<bool>,
+    #[serde(default)]
+    expected_last_modified_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct Attachment {
@@ -236,6 +249,23 @@ struct RecordComment {
     message: String,
     #[serde(default)]
     attachments: Vec<Attachment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordTodo {
+    id: String,
+    created_at: String,
+    #[serde(default)]
+    updated_at: String,
+    text: String,
+    owner: String,
+    #[serde(default)]
+    due_date: String,
+    #[serde(default)]
+    completed: bool,
+    #[serde(default)]
+    completed_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,6 +341,8 @@ struct ActivityRecord {
     attachments: Vec<Attachment>,
     #[serde(default)]
     comments: Vec<RecordComment>,
+    #[serde(default)]
+    todos: Vec<RecordTodo>,
     #[serde(default)]
     history: Vec<RecordHistoryEntry>,
     #[serde(default)]
@@ -1300,6 +1332,8 @@ fn record_last_update_timestamp(record: &ActivityRecord) -> String {
         .comments
         .iter()
         .map(|comment| comment.created_at.as_str())
+        .chain(record.todos.iter().map(|todo| todo.updated_at.as_str()))
+        .chain(record.todos.iter().map(|todo| todo.created_at.as_str()))
         .chain(record.history.iter().map(|entry| entry.created_at.as_str()))
         .chain(std::iter::once(record.submitted_at.as_str()))
         .max()
@@ -1494,6 +1528,98 @@ fn delete_activity_comment(
             db_path,
             &record_id,
             &comment_id,
+            expected_last_modified_at.as_deref(),
+        )
+    })?;
+
+    submit_result(&db_path, record_count, None)
+}
+
+#[tauri::command]
+fn append_activity_todo(
+    app: AppHandle,
+    state: State<'_, SaveLock>,
+    record_id: String,
+    payload: TodoInput,
+) -> Result<SubmitResult, String> {
+    let _guard = state
+        .0
+        .lock()
+        .map_err(|_| "Unable to acquire the save lock".to_string())?;
+
+    let record_id = record_id.trim().to_string();
+    if record_id.is_empty() {
+        return Err("Record id is required for todos".to_string());
+    }
+
+    let db_path = shared_db_path(&app)?;
+    let record_count = with_exclusive_db_lock(&db_path, |db_path| {
+        append_todo_to_activity_record(db_path, &record_id, payload)
+    })?;
+
+    submit_result(&db_path, record_count, None)
+}
+
+#[tauri::command]
+fn update_activity_todo(
+    app: AppHandle,
+    state: State<'_, SaveLock>,
+    record_id: String,
+    todo_id: String,
+    payload: TodoInput,
+) -> Result<SubmitResult, String> {
+    let _guard = state
+        .0
+        .lock()
+        .map_err(|_| "Unable to acquire the save lock".to_string())?;
+
+    let record_id = record_id.trim().to_string();
+    if record_id.is_empty() {
+        return Err("Record id is required for todo updates".to_string());
+    }
+
+    let todo_id = todo_id.trim().to_string();
+    if todo_id.is_empty() {
+        return Err("Todo id is required for todo updates".to_string());
+    }
+
+    let db_path = shared_db_path(&app)?;
+    let record_count = with_exclusive_db_lock(&db_path, |db_path| {
+        update_todo_in_activity_record(db_path, &record_id, &todo_id, payload)
+    })?;
+
+    submit_result(&db_path, record_count, None)
+}
+
+#[tauri::command]
+fn delete_activity_todo(
+    app: AppHandle,
+    state: State<'_, SaveLock>,
+    record_id: String,
+    todo_id: String,
+    expected_last_modified_at: Option<String>,
+) -> Result<SubmitResult, String> {
+    let _guard = state
+        .0
+        .lock()
+        .map_err(|_| "Unable to acquire the save lock".to_string())?;
+
+    let record_id = record_id.trim().to_string();
+    if record_id.is_empty() {
+        return Err("Record id is required for todo deletion".to_string());
+    }
+
+    let todo_id = todo_id.trim().to_string();
+    if todo_id.is_empty() {
+        return Err("Todo id is required for todo deletion".to_string());
+    }
+
+    let db_path = shared_db_path(&app)?;
+    let record_count = with_exclusive_db_lock(&db_path, |db_path| {
+        delete_todo_from_activity_record(
+            db_path,
+            &record_id,
+            &todo_id,
             expected_last_modified_at.as_deref(),
         )
     })?;
@@ -2052,6 +2178,7 @@ fn write_activity_record(db_path: &Path, payload: ActivityInput) -> Result<usize
         hw_development: payload.hw_development,
         sw_development: payload.sw_development,
         comments: Vec::new(),
+        todos: Vec::new(),
         history: vec![history_entry("created", "Record created".to_string())],
         last_modified_at: created_at,
     });
@@ -2159,6 +2286,129 @@ fn delete_comment_from_activity_record(
         "comment_deleted",
         "Comment deleted".to_string(),
     ));
+    record.last_modified_at = now_rfc3339();
+
+    persist_database(db_path, &database)?;
+
+    Ok(database.records.len())
+}
+
+fn append_todo_to_activity_record(
+    db_path: &Path,
+    record_id: &str,
+    payload: TodoInput,
+) -> Result<usize, String> {
+    let mut database = read_database_unlocked(db_path)?;
+    let payload = sanitize_and_validate_todo(payload, &database.settings)?;
+
+    let record = database
+        .records
+        .iter_mut()
+        .find(|record| record.id == record_id)
+        .ok_or_else(|| format!("Record '{}' was not found", record_id))?;
+    ensure_record_is_current(record, payload.expected_last_modified_at.as_deref())?;
+
+    let created_at = now_rfc3339();
+    record.todos.push(RecordTodo {
+        id: Uuid::new_v4().to_string(),
+        created_at: created_at.clone(),
+        updated_at: created_at.clone(),
+        text: payload.text,
+        owner: payload.owner,
+        due_date: payload.due_date.unwrap_or_default(),
+        completed: payload.completed.unwrap_or(false),
+        completed_at: String::new(),
+    });
+    record
+        .history
+        .push(history_entry("todo_added", "Todo added".to_string()));
+    record.last_modified_at = created_at;
+
+    persist_database(db_path, &database)?;
+
+    Ok(database.records.len())
+}
+
+fn update_todo_in_activity_record(
+    db_path: &Path,
+    record_id: &str,
+    todo_id: &str,
+    payload: TodoInput,
+) -> Result<usize, String> {
+    let mut database = read_database_unlocked(db_path)?;
+    let payload = sanitize_and_validate_todo(payload, &database.settings)?;
+
+    let record = database
+        .records
+        .iter_mut()
+        .find(|record| record.id == record_id)
+        .ok_or_else(|| format!("Record '{}' was not found", record_id))?;
+    ensure_record_is_current(record, payload.expected_last_modified_at.as_deref())?;
+
+    let todo = record
+        .todos
+        .iter_mut()
+        .find(|todo| todo.id == todo_id)
+        .ok_or_else(|| format!("Todo '{}' was not found", todo_id))?;
+
+    let was_completed = todo.completed;
+    let next_completed = payload.completed.unwrap_or(todo.completed);
+    let updated_at = now_rfc3339();
+
+    todo.text = payload.text;
+    todo.owner = payload.owner;
+    todo.due_date = payload.due_date.unwrap_or_default();
+    todo.completed = next_completed;
+    todo.updated_at = updated_at.clone();
+    if next_completed && !was_completed {
+        todo.completed_at = updated_at.clone();
+    } else if !next_completed {
+        todo.completed_at = String::new();
+    }
+
+    record.history.push(history_entry(
+        if next_completed && !was_completed {
+            "todo_completed"
+        } else {
+            "todo_updated"
+        },
+        if next_completed && !was_completed {
+            "Todo completed".to_string()
+        } else {
+            "Todo updated".to_string()
+        },
+    ));
+    record.last_modified_at = updated_at;
+
+    persist_database(db_path, &database)?;
+
+    Ok(database.records.len())
+}
+
+fn delete_todo_from_activity_record(
+    db_path: &Path,
+    record_id: &str,
+    todo_id: &str,
+    expected_last_modified_at: Option<&str>,
+) -> Result<usize, String> {
+    let mut database = read_database_unlocked(db_path)?;
+
+    let record = database
+        .records
+        .iter_mut()
+        .find(|record| record.id == record_id)
+        .ok_or_else(|| format!("Record '{}' was not found", record_id))?;
+    ensure_record_is_current(record, expected_last_modified_at)?;
+
+    let starting_len = record.todos.len();
+    record.todos.retain(|todo| todo.id != todo_id);
+
+    if record.todos.len() == starting_len {
+        return Err(format!("Todo '{}' was not found", todo_id));
+    }
+    record
+        .history
+        .push(history_entry("todo_deleted", "Todo deleted".to_string()));
     record.last_modified_at = now_rfc3339();
 
     persist_database(db_path, &database)?;
@@ -2806,6 +3056,9 @@ fn validate_settings_compatibility(
 ) -> Result<(), String> {
     for record in records {
         validate_allowed_value(&record.owner, &settings.owners, "Owner")?;
+        for todo in &record.todos {
+            validate_allowed_value(&todo.owner, &settings.owners, "Todo owner")?;
+        }
         validate_allowed_values(&record.projects, &settings.projects, "Project")?;
         validate_allowed_values(&record.departments, &settings.departments, "Department")?;
         validate_allowed_values(&record.categories, &settings.categories, "Category")?;
@@ -2837,6 +3090,11 @@ fn apply_settings_relabels(
                 "owners" => {
                     if record.owner == from {
                         record.owner = to.to_string();
+                    }
+                    for todo in &mut record.todos {
+                        if todo.owner == from {
+                            todo.owner = to.to_string();
+                        }
                     }
                 }
                 "projects" => replace_list_values(&mut record.projects, from, to),
@@ -2990,6 +3248,43 @@ fn sanitize_and_validate_comment(mut payload: CommentInput) -> Result<CommentInp
     }
 
     validate_attachments(&payload.attachments, "comment")?;
+
+    Ok(payload)
+}
+
+fn sanitize_and_validate_todo(
+    mut payload: TodoInput,
+    settings: &TrackerSettings,
+) -> Result<TodoInput, String> {
+    payload.text = payload.text.trim().to_string();
+    payload.owner = payload.owner.trim().to_string();
+    payload.due_date = payload
+        .due_date
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    payload.expected_last_modified_at = payload
+        .expected_last_modified_at
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if payload.text.is_empty() {
+        return Err("Todo text is required".to_string());
+    }
+
+    if payload.text.len() > 240 {
+        return Err("Todo text must be 240 characters or less".to_string());
+    }
+
+    if payload.owner.is_empty() {
+        return Err("Todo owner is required".to_string());
+    }
+
+    validate_allowed_value(&payload.owner, &settings.owners, "Owner")?;
+
+    if let Some(due_date) = payload.due_date.as_deref() {
+        NaiveDate::parse_from_str(due_date, "%Y-%m-%d")
+            .map_err(|_| "Todo due date must use the YYYY-MM-DD format".to_string())?;
+    }
 
     Ok(payload)
 }
@@ -3169,6 +3464,38 @@ fn sanitize_imported_record(
             })
         })
         .collect();
+    record.todos = record
+        .todos
+        .into_iter()
+        .filter_map(|todo| {
+            let id = todo.id.trim().to_string();
+            let created_at = todo.created_at.trim().to_string();
+            let updated_at = todo.updated_at.trim().to_string();
+            let text = todo.text.trim().to_string();
+            let owner = todo.owner.trim().to_string();
+            let due_date = todo.due_date.trim().to_string();
+            let completed_at = todo.completed_at.trim().to_string();
+
+            if id.is_empty() || created_at.is_empty() || text.is_empty() || owner.is_empty() {
+                return None;
+            }
+
+            Some(RecordTodo {
+                id,
+                created_at: created_at.clone(),
+                updated_at: if updated_at.is_empty() {
+                    created_at
+                } else {
+                    updated_at
+                },
+                text,
+                owner,
+                due_date,
+                completed: todo.completed,
+                completed_at,
+            })
+        })
+        .collect();
     record.history = record
         .history
         .into_iter()
@@ -3214,6 +3541,16 @@ fn sanitize_imported_record(
     }
 
     validate_attachments(&record.attachments, "record")?;
+    for todo in &record.todos {
+        let payload = TodoInput {
+            text: todo.text.clone(),
+            owner: todo.owner.clone(),
+            due_date: Some(todo.due_date.clone()),
+            completed: Some(todo.completed),
+            expected_last_modified_at: None,
+        };
+        sanitize_and_validate_todo(payload, settings)?;
+    }
     let payload = ActivityInput {
         title: record.title.clone(),
         owner: record.owner.clone(),
@@ -3291,6 +3628,9 @@ fn main() {
             append_activity_comment,
             update_activity_comment,
             delete_activity_comment,
+            append_activity_todo,
+            update_activity_todo,
+            delete_activity_todo,
             replace_database_records,
             restore_database_backup,
             get_debug_records,
