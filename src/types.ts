@@ -168,12 +168,14 @@ export interface DatabaseDocument {
 
 export interface AppendCommentPayload {
   message: string
+  createdAt?: string | null
   attachments?: AttachmentPayload[]
   expectedLastModifiedAt?: string | null
 }
 
 export interface UpdateCommentPayload {
   message: string
+  createdAt?: string | null
   attachments?: AttachmentPayload[]
   expectedLastModifiedAt?: string | null
 }

@@ -205,6 +205,8 @@ struct ActivityInput {
 struct CommentInput {
     message: String,
     #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
     attachments: Vec<Attachment>,
     #[serde(default)]
     expected_last_modified_at: Option<String>,
@@ -2074,7 +2076,7 @@ fn append_comment_to_activity_record(
         .ok_or_else(|| format!("Record '{}' was not found", record_id))?;
     ensure_record_is_current(record, payload.expected_last_modified_at.as_deref())?;
 
-    let comment_created_at = now_rfc3339();
+    let comment_created_at = payload.created_at.unwrap_or_else(now_rfc3339);
     let attachments = attachments::externalize(db_path, payload.attachments)?;
     record.comments.push(RecordComment {
         id: Uuid::new_v4().to_string(),
@@ -2115,6 +2117,9 @@ fn update_comment_in_activity_record(
         .ok_or_else(|| format!("Comment '{}' was not found", comment_id))?;
 
     comment.message = payload.message;
+    if let Some(created_at) = payload.created_at {
+        comment.created_at = created_at;
+    }
     if !payload.attachments.is_empty() {
         comment.attachments = attachments::externalize(db_path, payload.attachments)?;
     }
@@ -2551,6 +2556,10 @@ fn portable_db_directory() -> Option<PathBuf> {
     let executable_path = env::current_exe().ok()?;
     let executable_dir = executable_path.parent()?;
 
+    if cfg!(windows) {
+        return Some(executable_dir.to_path_buf());
+    }
+
     let candidate = executable_dir
         .parent()
         .and_then(|contents| {
@@ -2961,6 +2970,10 @@ fn sanitize_and_validate(
 
 fn sanitize_and_validate_comment(mut payload: CommentInput) -> Result<CommentInput, String> {
     payload.message = payload.message.trim().to_string();
+    payload.created_at = payload
+        .created_at
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     payload.attachments = sanitize_attachments(payload.attachments);
     payload.expected_last_modified_at = payload
         .expected_last_modified_at
@@ -2969,6 +2982,11 @@ fn sanitize_and_validate_comment(mut payload: CommentInput) -> Result<CommentInp
 
     if payload.message.is_empty() {
         return Err("Comment text is required".to_string());
+    }
+
+    if let Some(created_at) = payload.created_at.as_deref() {
+        DateTime::parse_from_rfc3339(created_at)
+            .map_err(|_| "Comment date must be a valid timestamp".to_string())?;
     }
 
     validate_attachments(&payload.attachments, "comment")?;

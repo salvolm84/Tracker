@@ -359,6 +359,15 @@ function formatTimestamp(value: string | null) {
   return value ? dayjs(value).format('DD MMM YYYY, HH:mm') : 'No data yet'
 }
 
+function formatDateTimeLocal(value: string | null) {
+  return value ? dayjs(value).format('YYYY-MM-DDTHH:mm') : ''
+}
+
+function dateTimeLocalToIso(value: string) {
+  const parsed = dayjs(value)
+  return parsed.isValid() ? parsed.second(0).millisecond(0).toISOString() : null
+}
+
 function formatShortDate(value: string | null) {
   return value ? dayjs(value).format('DD MMM YYYY') : 'No data yet'
 }
@@ -1881,6 +1890,7 @@ function App() {
   const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(true)
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
   const [editingCommentMessage, setEditingCommentMessage] = useState('')
+  const [editingCommentCreatedAt, setEditingCommentCreatedAt] = useState('')
   const [previewAttachmentKey, setPreviewAttachmentKey] = useState<string | null>(null)
   const [previewAttachmentDataByKey, setPreviewAttachmentDataByKey] =
     useState<Record<string, AttachmentData>>({})
@@ -3507,12 +3517,14 @@ function App() {
   function startEditingComment(comment: RecordComment) {
     setEditingCommentId(comment.id)
     setEditingCommentMessage(comment.message)
+    setEditingCommentCreatedAt(formatDateTimeLocal(comment.createdAt))
     setCommentError(null)
   }
 
   function cancelEditingComment() {
     setEditingCommentId(null)
     setEditingCommentMessage('')
+    setEditingCommentCreatedAt('')
     setCommentError(null)
   }
 
@@ -3526,6 +3538,11 @@ function App() {
       setCommentError('Comment text is required.')
       return
     }
+    const createdAt = dateTimeLocalToIso(editingCommentCreatedAt)
+    if (!createdAt) {
+      setCommentError('Comment date is required.')
+      return
+    }
 
     setIsSavingComment(true)
     setCommentError(null)
@@ -3535,6 +3552,7 @@ function App() {
     try {
       const result = await updateActivityComment(selectedRecord.id, commentId, {
         message,
+        createdAt,
         expectedLastModifiedAt: recordConcurrencyToken(selectedRecord),
       })
 
@@ -3558,6 +3576,7 @@ function App() {
       await refreshRecords({ silent: true })
       setEditingCommentId(null)
       setEditingCommentMessage('')
+      setEditingCommentCreatedAt('')
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Unable to update the comment'
@@ -6727,17 +6746,30 @@ function App() {
                                     </Group>
                                   </div>
                                   {editingCommentId === comment.id ? (
-                                    <Textarea
-                                      value={editingCommentMessage}
-                                      minRows={4}
-                                      autosize
-                                      onChange={(event) => {
-                                        setEditingCommentMessage(event.currentTarget.value)
-                                        if (commentError) {
-                                          setCommentError(null)
-                                        }
-                                      }}
-                                    />
+                                    <Stack gap="sm">
+                                      <TextInput
+                                        label="Comment date"
+                                        type="datetime-local"
+                                        value={editingCommentCreatedAt}
+                                        onChange={(event) => {
+                                          setEditingCommentCreatedAt(event.currentTarget.value)
+                                          if (commentError) {
+                                            setCommentError(null)
+                                          }
+                                        }}
+                                      />
+                                      <Textarea
+                                        value={editingCommentMessage}
+                                        minRows={4}
+                                        autosize
+                                        onChange={(event) => {
+                                          setEditingCommentMessage(event.currentTarget.value)
+                                          if (commentError) {
+                                            setCommentError(null)
+                                          }
+                                        }}
+                                      />
+                                    </Stack>
                                   ) : (
                                     <div className="comment-body">
                                       <Text className="record-description">
