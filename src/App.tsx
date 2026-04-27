@@ -187,6 +187,7 @@ type ActiveModule = 'activity' | 'debug'
 type WeeklyReportMode = 'week' | 'range'
 type WeeklyTemplate = 'bullets' | 'executive' | 'owner' | 'project'
 type HeatmapValueMode = 'count' | 'percent'
+type TodoDueFilter = 'all' | 'overdue' | 'today' | 'week' | 'none'
 type SavedView = {
   id: string
   name: string
@@ -394,6 +395,25 @@ function formatDateRange(startDate: string, endDate: string) {
 
 function isTodoPastDue(todo: Pick<RecordTodo, 'dueDate' | 'completed'>) {
   return Boolean(todo.dueDate) && !todo.completed && dayjs(todo.dueDate).isBefore(dayjs(), 'day')
+}
+
+function formatHistoryKind(kind: string): string {
+  const labels: Record<string, string> = {
+    created: 'Record created',
+    comment_added: 'Comment added',
+    comment_deleted: 'Comment deleted',
+    todo_added: 'Todo added',
+    todo_updated: 'Todo updated',
+    todo_completed: 'Todo completed',
+    todo_reopened: 'Todo reopened',
+    todo_deleted: 'Todo deleted',
+    updated: 'Record updated',
+    quick_update: 'Quick update',
+    lesson_added: 'Lesson added',
+    lesson_updated: 'Lesson updated',
+    lesson_deleted: 'Lesson deleted',
+  }
+  return labels[kind] ?? kind.replace(/_/g, ' ')
 }
 
 function formatWeeklyRange(year: number, week: number) {
@@ -1916,6 +1936,20 @@ function App() {
   const [editingTodoDueDate, setEditingTodoDueDate] = useState<string | null>(null)
   const [collapsedTodoOwners, setCollapsedTodoOwners] = useState<Set<string>>(new Set())
   const [collapsedTodoTrackers, setCollapsedTodoTrackers] = useState<Set<string>>(new Set())
+  const [todoFilters, setTodoFilters] = useState<{
+    owners: string[]
+    dueFilter: TodoDueFilter
+    statuses: string[]
+    projects: string[]
+  }>({ owners: [], dueFilter: 'all', statuses: [], projects: [] })
+  const [isTodoFiltersVisible, setIsTodoFiltersVisible] = useState(false)
+  const [isNewTodoModalOpen, setIsNewTodoModalOpen] = useState(false)
+  const [newTodoRecordId, setNewTodoRecordId] = useState<string | null>(null)
+  const [newTodoText, setNewTodoText] = useState('')
+  const [newTodoOwner, setNewTodoOwner] = useState<string | null>(null)
+  const [newTodoDueDate, setNewTodoDueDate] = useState<string | null>(null)
+  const [newTodoError, setNewTodoError] = useState<string | null>(null)
+  const [isCreatingGlobalTodo, setIsCreatingGlobalTodo] = useState(false)
   const [previewAttachmentKey, setPreviewAttachmentKey] = useState<string | null>(null)
   const [previewAttachmentDataByKey, setPreviewAttachmentDataByKey] =
     useState<Record<string, AttachmentData>>({})
@@ -2340,24 +2374,44 @@ function App() {
     ],
     [filteredRecords, pinnedRecordIds],
   )
-  const todoPageItems = useMemo(
-    () =>
-      records
-        .flatMap((record) =>
-          (record.todos ?? [])
-            .filter((todo) => showCompletedTodos || !todo.completed)
-            .map((todo) => ({ record, todo })),
-        )
-        .sort((left, right) => {
-          if (left.todo.completed !== right.todo.completed) {
-            return left.todo.completed ? 1 : -1
-          }
-          const leftDue = left.todo.dueDate || '9999-12-31'
-          const rightDue = right.todo.dueDate || '9999-12-31'
-          return leftDue.localeCompare(rightDue) || left.record.title.localeCompare(right.record.title)
-        }),
-    [records, showCompletedTodos],
+  const allOpenTodos = useMemo(
+    () => records.flatMap((r) => r.todos ?? []).filter((t) => !t.completed),
+    [records],
   )
+  const overdueTodoCount = useMemo(
+    () => allOpenTodos.filter((t) => isTodoPastDue(t)).length,
+    [allOpenTodos],
+  )
+  const todoPageItems = useMemo(() => {
+    const todayStr = dayjs().format('YYYY-MM-DD')
+    const weekEndStr = dayjs().endOf('isoWeek').format('YYYY-MM-DD')
+    return records
+      .flatMap((record) => {
+        if (todoFilters.statuses.length > 0 && !todoFilters.statuses.includes(record.status)) return []
+        if (todoFilters.projects.length > 0 && !record.projects.some((p) => todoFilters.projects.includes(p))) return []
+        return (record.todos ?? [])
+          .filter((todo) => showCompletedTodos || !todo.completed)
+          .filter((todo) => todoFilters.owners.length === 0 || todoFilters.owners.includes(todo.owner))
+          .filter((todo) => {
+            switch (todoFilters.dueFilter) {
+              case 'overdue': return isTodoPastDue(todo)
+              case 'today': return Boolean(todo.dueDate) && todo.dueDate === todayStr && !todo.completed
+              case 'week': return Boolean(todo.dueDate) && !todo.completed && todo.dueDate >= todayStr && todo.dueDate <= weekEndStr
+              case 'none': return !todo.dueDate
+              default: return true
+            }
+          })
+          .map((todo) => ({ record, todo }))
+      })
+      .sort((left, right) => {
+        if (left.todo.completed !== right.todo.completed) {
+          return left.todo.completed ? 1 : -1
+        }
+        const leftDue = left.todo.dueDate || '9999-12-31'
+        const rightDue = right.todo.dueDate || '9999-12-31'
+        return leftDue.localeCompare(rightDue) || left.record.title.localeCompare(right.record.title)
+      })
+  }, [records, showCompletedTodos, todoFilters])
   const openTodoItems = useMemo(
     () => todoPageItems.filter(({ todo }) => !todo.completed),
     [todoPageItems],
@@ -3885,6 +3939,69 @@ function App() {
     }
   }
 
+  async function handleCreateGlobalTodo() {
+    const targetRecord = records.find((r) => r.id === newTodoRecordId)
+    if (!newTodoRecordId || !targetRecord) {
+      setNewTodoError('Select a record for this todo.')
+      return
+    }
+    if (!newTodoText.trim()) {
+      setNewTodoError('Todo text is required.')
+      return
+    }
+    if (!newTodoOwner) {
+      setNewTodoError('Select an owner for this todo.')
+      return
+    }
+
+    setIsCreatingGlobalTodo(true)
+    setNewTodoError(null)
+
+    try {
+      const result = await appendActivityTodo(newTodoRecordId, {
+        text: newTodoText.trim(),
+        owner: newTodoOwner,
+        dueDate: newTodoDueDate,
+        completed: false,
+        expectedLastModifiedAt: recordConcurrencyToken(targetRecord),
+      })
+
+      startTransition(() => {
+        setBootstrapData((current) => ({
+          ...current,
+          dbPath: result.dbPath,
+          dbRevision: result.dbRevision,
+          recordCount: result.recordCount,
+        }))
+        notifications.show({
+          color: 'teal',
+          title: 'Todo added',
+          message: 'Todo has been saved to the record.',
+          autoClose: 3000,
+        })
+      })
+
+      await refreshRecords({ silent: true })
+      setIsNewTodoModalOpen(false)
+      setNewTodoRecordId(null)
+      setNewTodoText('')
+      setNewTodoOwner(null)
+      setNewTodoDueDate(null)
+      setNewTodoError(null)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to add the todo'
+      setNewTodoError(message)
+      notifications.show({
+        color: 'red',
+        title: 'Add todo failed',
+        message,
+        autoClose: 6000,
+      })
+    } finally {
+      setIsCreatingGlobalTodo(false)
+    }
+  }
+
   function startEditingTodo(todo: RecordTodo) {
     setEditingTodoId(todo.id)
     setEditingTodoText(todo.text)
@@ -5147,16 +5264,23 @@ function App() {
                   className={`page-link ${currentPage === 'todo' ? 'active' : ''}`}
                   onClick={() => navigateToPage('todo')}
                 >
-                  <span className="page-link-icon">
+                  <span className="page-link-icon" style={{ position: 'relative' }}>
                     <IconCheck size={18} />
+                    {overdueTodoCount > 0 ? (
+                      <span className="nav-signal-dot" />
+                    ) : null}
                   </span>
                   <span>
                     <strong>TODO</strong>
                     <small>Open action items</small>
                   </span>
-                  {openTodoItems.length > 0 && !isSidebarCollapsed ? (
+                  {overdueTodoCount > 0 && !isSidebarCollapsed ? (
+                    <Badge size="xs" variant="filled" color="red" radius="xl" className="page-link-shortcut">
+                      {overdueTodoCount} overdue
+                    </Badge>
+                  ) : allOpenTodos.length > 0 && !isSidebarCollapsed ? (
                     <Badge size="xs" variant="filled" color="blue" radius="xl" className="page-link-shortcut">
-                      {openTodoItems.length}
+                      {allOpenTodos.length}
                     </Badge>
                   ) : (
                     <span className="page-link-shortcut">4</span>
@@ -5975,7 +6099,7 @@ function App() {
               </div>
 
               {/* ── Health strip ─────────────────────────────────────────── */}
-              <SimpleGrid cols={{ base: 2, md: 3, xl: 6 }} spacing="md">
+              <SimpleGrid cols={{ base: 2, md: 4, xl: 8 }} spacing="md">
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Text className="metric-label">Total records</Text>
                   <Text className="insight-value">{filteredRecords.length}</Text>
@@ -5999,6 +6123,33 @@ function App() {
                 <Card radius="xl" padding="lg" style={{ background: staleCount > 0 ? 'rgba(234,179,8,0.08)' : undefined, border: staleCount > 0 ? '1px solid rgba(234,179,8,0.25)' : undefined }}>
                   <Text className="metric-label">Stale</Text>
                   <Text className="insight-value" c={staleCount > 0 ? 'yellow' : 'dimmed'}>{staleCount}</Text>
+                </Card>
+                <Card
+                  radius="xl"
+                  padding="lg"
+                  className="surface-card"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => navigateToPage('todo')}
+                >
+                  <Text className="metric-label">Open TODOs</Text>
+                  <Text className="insight-value" c={allOpenTodos.length > 0 ? 'blue' : 'dimmed'}>{allOpenTodos.length}</Text>
+                </Card>
+                <Card
+                  radius="xl"
+                  padding="lg"
+                  style={{
+                    background: overdueTodoCount > 0 ? 'rgba(239,68,68,0.08)' : undefined,
+                    border: overdueTodoCount > 0 ? '1px solid rgba(239,68,68,0.25)' : undefined,
+                    cursor: overdueTodoCount > 0 ? 'pointer' : undefined,
+                  }}
+                  onClick={() => {
+                    if (overdueTodoCount === 0) return
+                    setTodoFilters((f) => ({ ...f, dueFilter: 'overdue' }))
+                    navigateToPage('todo')
+                  }}
+                >
+                  <Text className="metric-label">Overdue TODOs</Text>
+                  <Text className="insight-value" c={overdueTodoCount > 0 ? 'red' : 'dimmed'}>{overdueTodoCount}</Text>
                 </Card>
               </SimpleGrid>
 
@@ -7583,7 +7734,7 @@ function App() {
                                   </Text>
                                   <Text fw={600}>{entry.message}</Text>
                                   <Text size="sm" c="dimmed">
-                                    {entry.kind}
+                                    {formatHistoryKind(entry.kind)}
                                   </Text>
                                 </div>
                               ))}
@@ -7605,6 +7756,79 @@ function App() {
             </Stack>
           ) : currentPage === 'todo' ? (
             <Stack gap="lg">
+              <Modal
+                opened={isNewTodoModalOpen}
+                onClose={() => {
+                  setIsNewTodoModalOpen(false)
+                  setNewTodoRecordId(null)
+                  setNewTodoText('')
+                  setNewTodoOwner(null)
+                  setNewTodoDueDate(null)
+                  setNewTodoError(null)
+                }}
+                title="New TODO"
+                radius="lg"
+                size="md"
+              >
+                <Stack gap="md">
+                  <Select
+                    label="Record"
+                    placeholder="Search and select a record"
+                    data={records.map((r) => ({ value: r.id, label: `${formatRecordKey(r.id)} · ${r.title}` }))}
+                    value={newTodoRecordId}
+                    onChange={setNewTodoRecordId}
+                    searchable
+                    required
+                  />
+                  <TextInput
+                    label="Todo"
+                    placeholder="Describe the action item"
+                    value={newTodoText}
+                    onChange={(e) => setNewTodoText(e.currentTarget.value)}
+                    required
+                  />
+                  <Select
+                    label="Owner"
+                    placeholder="Assign to an owner"
+                    data={asc(bootstrapData.owners)}
+                    value={newTodoOwner}
+                    onChange={setNewTodoOwner}
+                    searchable
+                    required
+                  />
+                  <DateInput
+                    label="Due date"
+                    placeholder="Optional"
+                    valueFormat="DD MMM YYYY"
+                    clearable
+                    value={newTodoDueDate ? dayjs(newTodoDueDate).toDate() : null}
+                    onChange={(d) => setNewTodoDueDate(d ? dayjs(d).format('YYYY-MM-DD') : null)}
+                  />
+                  {newTodoError ? (
+                    <Text size="sm" c="red">{newTodoError}</Text>
+                  ) : null}
+                  <Group justify="flex-end" gap="sm">
+                    <Button
+                      variant="subtle"
+                      color="gray"
+                      radius="xl"
+                      onClick={() => setIsNewTodoModalOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="light"
+                      color="blue"
+                      radius="xl"
+                      onClick={() => void handleCreateGlobalTodo()}
+                      loading={isCreatingGlobalTodo}
+                    >
+                      Add TODO
+                    </Button>
+                  </Group>
+                </Stack>
+              </Modal>
+
               <div className="section-header">
                 <div>
                   <Text className="eyebrow">TODO</Text>
@@ -7617,6 +7841,11 @@ function App() {
                 </div>
 
                 <Group gap="sm">
+                  {overdueTodoCount > 0 ? (
+                    <Badge variant="filled" color="red" radius="xl">
+                      {overdueTodoCount} overdue
+                    </Badge>
+                  ) : null}
                   <Badge variant="light" color="blue" radius="xl">
                     {openTodoItems.length} open
                   </Badge>
@@ -7629,6 +7858,15 @@ function App() {
                     variant="light"
                     color="blue"
                     radius="xl"
+                    leftSection={<IconPlus size={16} />}
+                    onClick={() => setIsNewTodoModalOpen(true)}
+                  >
+                    New TODO
+                  </Button>
+                  <Button
+                    variant="light"
+                    color="blue"
+                    radius="xl"
                     onClick={() => void refreshRecords()}
                     loading={isRefreshingRecords}
                     disabled={isBootstrapping}
@@ -7637,6 +7875,98 @@ function App() {
                   </Button>
                 </Group>
               </div>
+
+              {/* ── Filter bar ─────────────────────────────────────────────── */}
+              <Card radius="xl" padding="md" className="surface-card">
+                <Stack gap="sm">
+                  <Group justify="space-between" align="center">
+                    <Group gap="xs">
+                      <Text fw={600} size="sm">Filters</Text>
+                      {(todoFilters.owners.length > 0 || todoFilters.dueFilter !== 'all' || todoFilters.statuses.length > 0 || todoFilters.projects.length > 0) ? (
+                        <Badge variant="dot" color="blue" size="sm">active</Badge>
+                      ) : null}
+                    </Group>
+                    <Group gap="xs">
+                      <Group gap={4}>
+                        {[
+                          { id: 'overdue', label: 'Overdue' },
+                          { id: 'today', label: 'Today' },
+                          { id: 'week', label: 'This week' },
+                          { id: 'none', label: 'No due date' },
+                        ].map(({ id, label }) => (
+                          <Button
+                            key={id}
+                            size="compact-xs"
+                            variant={todoFilters.dueFilter === id ? 'filled' : 'default'}
+                            color={id === 'overdue' ? 'red' : 'blue'}
+                            radius="xl"
+                            onClick={() =>
+                              setTodoFilters((f) => ({
+                                ...f,
+                                dueFilter: (f.dueFilter === id ? 'all' : id) as TodoDueFilter,
+                              }))
+                            }
+                          >
+                            {label}
+                          </Button>
+                        ))}
+                      </Group>
+                      <Button
+                        variant="subtle"
+                        color="gray"
+                        radius="xl"
+                        size="compact-xs"
+                        onClick={() => setIsTodoFiltersVisible((v) => !v)}
+                      >
+                        {isTodoFiltersVisible ? 'Hide filters' : 'More filters'}
+                      </Button>
+                      {(todoFilters.owners.length > 0 || todoFilters.dueFilter !== 'all' || todoFilters.statuses.length > 0 || todoFilters.projects.length > 0) ? (
+                        <Button
+                          variant="subtle"
+                          color="red"
+                          radius="xl"
+                          size="compact-xs"
+                          onClick={() => setTodoFilters({ owners: [], dueFilter: 'all', statuses: [], projects: [] })}
+                        >
+                          Clear
+                        </Button>
+                      ) : null}
+                    </Group>
+                  </Group>
+
+                  {isTodoFiltersVisible ? (
+                    <div className="filter-toolbar-grid">
+                      <MultiSelect
+                        label="Owner"
+                        placeholder="All owners"
+                        data={asc(bootstrapData.owners)}
+                        value={todoFilters.owners}
+                        onChange={(v) => setTodoFilters((f) => ({ ...f, owners: v }))}
+                        searchable
+                        clearable
+                      />
+                      <MultiSelect
+                        label="Tracker status"
+                        placeholder="All statuses"
+                        data={asc(bootstrapData.statuses)}
+                        value={todoFilters.statuses}
+                        onChange={(v) => setTodoFilters((f) => ({ ...f, statuses: v }))}
+                        searchable
+                        clearable
+                      />
+                      <MultiSelect
+                        label="Project"
+                        placeholder="All projects"
+                        data={asc(bootstrapData.projects)}
+                        value={todoFilters.projects}
+                        onChange={(v) => setTodoFilters((f) => ({ ...f, projects: v }))}
+                        searchable
+                        clearable
+                      />
+                    </div>
+                  ) : null}
+                </Stack>
+              </Card>
 
               {todoPageItems.length === 0 ? (
                 <Card radius="xl" padding="lg" className="surface-card">
@@ -7975,6 +8305,16 @@ function App() {
                                     {badge.label}
                                   </Badge>
                                 ))}
+                                {(() => {
+                                  const openTodos = (record.todos ?? []).filter((t) => !t.completed)
+                                  if (openTodos.length === 0) return null
+                                  const todoOverdue = openTodos.filter((t) => isTodoPastDue(t)).length
+                                  return (
+                                    <Badge variant="light" color={todoOverdue > 0 ? 'red' : 'blue'} radius="xl" size="xs">
+                                      {todoOverdue > 0 ? `${todoOverdue} TODO overdue` : `${openTodos.length} TODO`}
+                                    </Badge>
+                                  )
+                                })()}
                               </div>
                             </button>
                           ))}

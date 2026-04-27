@@ -2309,19 +2309,22 @@ fn append_todo_to_activity_record(
     ensure_record_is_current(record, payload.expected_last_modified_at.as_deref())?;
 
     let created_at = now_rfc3339();
+    let todo_text = payload.text.clone();
+    let todo_owner = payload.owner.clone();
     record.todos.push(RecordTodo {
         id: Uuid::new_v4().to_string(),
         created_at: created_at.clone(),
         updated_at: created_at.clone(),
-        text: payload.text,
-        owner: payload.owner,
+        text: todo_text.clone(),
+        owner: todo_owner.clone(),
         due_date: payload.due_date.unwrap_or_default(),
         completed: payload.completed.unwrap_or(false),
         completed_at: String::new(),
     });
-    record
-        .history
-        .push(history_entry("todo_added", "Todo added".to_string()));
+    record.history.push(history_entry(
+        "todo_added",
+        format!("Todo added: \"{}\" assigned to {}", todo_text, todo_owner),
+    ));
     record.last_modified_at = created_at;
 
     persist_database(db_path, &database)?;
@@ -2351,6 +2354,9 @@ fn update_todo_in_activity_record(
         .find(|todo| todo.id == todo_id)
         .ok_or_else(|| format!("Todo '{}' was not found", todo_id))?;
 
+    let previous_text = todo.text.clone();
+    let previous_owner = todo.owner.clone();
+    let previous_due_date = todo.due_date.clone();
     let was_completed = todo.completed;
     let next_completed = payload.completed.unwrap_or(todo.completed);
     let updated_at = now_rfc3339();
@@ -2366,18 +2372,39 @@ fn update_todo_in_activity_record(
         todo.completed_at = String::new();
     }
 
-    record.history.push(history_entry(
-        if next_completed && !was_completed {
-            "todo_completed"
+    let mut changes = Vec::new();
+    if previous_text != todo.text {
+        changes.push(format!("text to \"{}\"", todo.text));
+    }
+    if previous_owner != todo.owner {
+        changes.push(format!("owner to {}", todo.owner));
+    }
+    if previous_due_date != todo.due_date {
+        changes.push(if todo.due_date.is_empty() {
+            "due date cleared".to_string()
         } else {
-            "todo_updated"
-        },
-        if next_completed && !was_completed {
-            "Todo completed".to_string()
-        } else {
-            "Todo updated".to_string()
-        },
-    ));
+            format!("due date to {}", todo.due_date)
+        });
+    }
+    if next_completed && !was_completed {
+        changes.push("completed".to_string());
+    } else if !next_completed && was_completed {
+        changes.push("reopened".to_string());
+    }
+
+    let history_kind = if next_completed && !was_completed {
+        "todo_completed"
+    } else if !next_completed && was_completed {
+        "todo_reopened"
+    } else {
+        "todo_updated"
+    };
+    let history_message = if changes.is_empty() {
+        format!("Todo saved with no material changes: \"{}\"", todo.text)
+    } else {
+        format!("Todo updated: \"{}\" ({})", todo.text, changes.join(", "))
+    };
+    record.history.push(history_entry(history_kind, history_message));
     record.last_modified_at = updated_at;
 
     persist_database(db_path, &database)?;
@@ -2400,15 +2427,24 @@ fn delete_todo_from_activity_record(
         .ok_or_else(|| format!("Record '{}' was not found", record_id))?;
     ensure_record_is_current(record, expected_last_modified_at)?;
 
+    let deleted_todo = record
+        .todos
+        .iter()
+        .find(|todo| todo.id == todo_id)
+        .map(|todo| todo.text.clone());
     let starting_len = record.todos.len();
     record.todos.retain(|todo| todo.id != todo_id);
 
     if record.todos.len() == starting_len {
         return Err(format!("Todo '{}' was not found", todo_id));
     }
-    record
-        .history
-        .push(history_entry("todo_deleted", "Todo deleted".to_string()));
+    record.history.push(history_entry(
+        "todo_deleted",
+        format!(
+            "Todo deleted: \"{}\"",
+            deleted_todo.unwrap_or_else(|| todo_id.to_string())
+        ),
+    ));
     record.last_modified_at = now_rfc3339();
 
     persist_database(db_path, &database)?;
