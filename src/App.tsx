@@ -392,6 +392,10 @@ function formatDateRange(startDate: string, endDate: string) {
   return `${formattedStart} - ${formattedEnd}`
 }
 
+function isTodoPastDue(todo: Pick<RecordTodo, 'dueDate' | 'completed'>) {
+  return Boolean(todo.dueDate) && !todo.completed && dayjs(todo.dueDate).isBefore(dayjs(), 'day')
+}
+
 function formatWeeklyRange(year: number, week: number) {
   const start = dayjs(`${year}-01-04`).isoWeek(week).startOf('isoWeek')
   const end = start.endOf('isoWeek')
@@ -1900,6 +1904,7 @@ function App() {
   const [todoText, setTodoText] = useState('')
   const [todoOwner, setTodoOwner] = useState<string | null>(null)
   const [todoDueDate, setTodoDueDate] = useState<string | null>(null)
+  const [showCompletedTodos, setShowCompletedTodos] = useState(false)
   const [areCommentsCollapsed, setAreCommentsCollapsed] = useState(true)
   const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(true)
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
@@ -1909,6 +1914,8 @@ function App() {
   const [editingTodoText, setEditingTodoText] = useState('')
   const [editingTodoOwner, setEditingTodoOwner] = useState<string | null>(null)
   const [editingTodoDueDate, setEditingTodoDueDate] = useState<string | null>(null)
+  const [collapsedTodoOwners, setCollapsedTodoOwners] = useState<Set<string>>(new Set())
+  const [collapsedTodoTrackers, setCollapsedTodoTrackers] = useState<Set<string>>(new Set())
   const [previewAttachmentKey, setPreviewAttachmentKey] = useState<string | null>(null)
   const [previewAttachmentDataByKey, setPreviewAttachmentDataByKey] =
     useState<Record<string, AttachmentData>>({})
@@ -2333,20 +2340,65 @@ function App() {
     ],
     [filteredRecords, pinnedRecordIds],
   )
-  const openTodoItems = useMemo(
+  const todoPageItems = useMemo(
     () =>
       records
         .flatMap((record) =>
           (record.todos ?? [])
-            .filter((todo) => !todo.completed)
+            .filter((todo) => showCompletedTodos || !todo.completed)
             .map((todo) => ({ record, todo })),
         )
         .sort((left, right) => {
+          if (left.todo.completed !== right.todo.completed) {
+            return left.todo.completed ? 1 : -1
+          }
           const leftDue = left.todo.dueDate || '9999-12-31'
           const rightDue = right.todo.dueDate || '9999-12-31'
           return leftDue.localeCompare(rightDue) || left.record.title.localeCompare(right.record.title)
         }),
-    [records],
+    [records, showCompletedTodos],
+  )
+  const openTodoItems = useMemo(
+    () => todoPageItems.filter(({ todo }) => !todo.completed),
+    [todoPageItems],
+  )
+  const todoOwnerGroups = useMemo(
+    () =>
+      Array.from(
+        todoPageItems.reduce((ownerMap, item) => {
+          const owner = item.todo.owner || 'Unassigned'
+          const ownerItems = ownerMap.get(owner) ?? []
+          ownerItems.push(item)
+          ownerMap.set(owner, ownerItems)
+          return ownerMap
+        }, new Map<string, typeof todoPageItems>()),
+      )
+        .map(([owner, items]) => {
+          const trackerGroups = Array.from(
+            items.reduce((recordMap, item) => {
+              const recordItems = recordMap.get(item.record.id) ?? []
+              recordItems.push(item)
+              recordMap.set(item.record.id, recordItems)
+              return recordMap
+            }, new Map<string, typeof todoPageItems>()),
+          )
+            .map(([recordId, recordItems]) => ({
+              recordId,
+              record: recordItems[0].record,
+              items: recordItems,
+              overdueCount: recordItems.filter(({ todo }) => isTodoPastDue(todo)).length,
+            }))
+            .sort((left, right) => left.record.title.localeCompare(right.record.title))
+
+          return {
+            owner,
+            items,
+            trackerGroups,
+            overdueCount: items.filter(({ todo }) => isTodoPastDue(todo)).length,
+          }
+        })
+        .sort((left, right) => left.owner.localeCompare(right.owner)),
+    [todoPageItems],
   )
   const activeFilterGroups = [
     {
@@ -2438,10 +2490,7 @@ function App() {
     ? sortedComments(selectedRecord.comments)
     : []
   const selectedRecordTodos = selectedRecord
-    ? [...(selectedRecord.todos ?? [])].sort((left, right) => {
-        if (left.completed !== right.completed) {
-          return left.completed ? 1 : -1
-        }
+    ? [...(selectedRecord.todos ?? [])].filter((todo) => !todo.completed).sort((left, right) => {
         const leftDue = left.dueDate || '9999-12-31'
         const rightDue = right.dueDate || '9999-12-31'
         return leftDue.localeCompare(rightDue) || right.createdAt.localeCompare(left.createdAt)
@@ -3850,6 +3899,30 @@ function App() {
     setEditingTodoOwner(null)
     setEditingTodoDueDate(null)
     setTodoError(null)
+  }
+
+  function toggleTodoOwnerGroup(owner: string) {
+    setCollapsedTodoOwners((current) => {
+      const next = new Set(current)
+      if (next.has(owner)) {
+        next.delete(owner)
+      } else {
+        next.add(owner)
+      }
+      return next
+    })
+  }
+
+  function toggleTodoTrackerGroup(groupKey: string) {
+    setCollapsedTodoTrackers((current) => {
+      const next = new Set(current)
+      if (next.has(groupKey)) {
+        next.delete(groupKey)
+      } else {
+        next.add(groupKey)
+      }
+      return next
+    })
   }
 
   async function handleSaveEditedTodo(record: ActivityRecord, todo: RecordTodo, completed = todo.completed) {
@@ -5371,7 +5444,9 @@ function App() {
                     {openTodoItems.length === 1 ? '' : 's'}
                   </Text>
                   <Text size="sm" c="dimmed">
-                    Sorted by due date, with undated items last.
+                    {showCompletedTodos
+                      ? `${todoPageItems.length} total including completed.`
+                      : 'Completed items are hidden.'}
                   </Text>
                 </Stack>
               </Card>
@@ -7545,6 +7620,11 @@ function App() {
                   <Badge variant="light" color="blue" radius="xl">
                     {openTodoItems.length} open
                   </Badge>
+                  <Checkbox
+                    label="Show completed"
+                    checked={showCompletedTodos}
+                    onChange={(event) => setShowCompletedTodos(event.currentTarget.checked)}
+                  />
                   <Button
                     variant="light"
                     color="blue"
@@ -7558,126 +7638,201 @@ function App() {
                 </Group>
               </div>
 
-              {openTodoItems.length === 0 ? (
+              {todoPageItems.length === 0 ? (
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Stack gap="xs" align="center">
                     <IconCheck size={32} opacity={0.35} />
-                    <Text fw={700}>No open TODO items</Text>
-                    <Text size="sm" c="dimmed">Open action items created inside records will appear here.</Text>
+                    <Text fw={700}>{showCompletedTodos ? 'No TODO items' : 'No open TODO items'}</Text>
+                    <Text size="sm" c="dimmed">
+                      {showCompletedTodos
+                        ? 'TODO items created inside records will appear here.'
+                        : 'Open action items created inside records will appear here.'}
+                    </Text>
                   </Stack>
                 </Card>
               ) : (
                 <div className="todo-page-list">
-                  {openTodoItems.map(({ record, todo }) => {
-                    const isEditing = editingTodoId === todo.id
+                  {todoOwnerGroups.map((ownerGroup) => {
+                    const ownerCollapsed = collapsedTodoOwners.has(ownerGroup.owner)
                     return (
-                      <Card radius="xl" padding="lg" className="surface-card todo-page-item" key={`${record.id}-${todo.id}`}>
-                        <Stack gap="md">
-                          <Group justify="space-between" align="flex-start">
-                            <div>
-                              <Text className="record-row-key">{formatRecordKey(record.id)}</Text>
-                              <Text fw={700}>{record.title}</Text>
-                              <Text size="sm" c="dimmed">
-                                {record.owner} · {record.status} · {record.projects.join(', ') || 'No project'}
-                              </Text>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="subtle"
-                              color="blue"
-                              radius="xl"
-                              size="compact-sm"
-                              onClick={() => jumpToRecord(record.id)}
-                            >
-                              Open record
-                            </Button>
-                          </Group>
+                      <Card radius="xl" padding="lg" className="surface-card todo-owner-group" key={ownerGroup.owner}>
+                        <button
+                          type="button"
+                          className="todo-group-header"
+                          onClick={() => toggleTodoOwnerGroup(ownerGroup.owner)}
+                          aria-expanded={!ownerCollapsed}
+                        >
+                          <span className="todo-group-title">
+                            {ownerCollapsed ? <IconChevronDown size={16} /> : <IconChevronUp size={16} />}
+                            <span>{ownerGroup.owner}</span>
+                          </span>
+                          <span className="todo-group-meta">
+                            {ownerGroup.overdueCount > 0 ? (
+                              <Badge size="sm" variant="filled" color="red" radius="xl">
+                                {ownerGroup.overdueCount} overdue
+                              </Badge>
+                            ) : null}
+                            <Badge size="sm" variant="light" color="blue" radius="xl">
+                              {ownerGroup.items.length} open
+                            </Badge>
+                          </span>
+                        </button>
 
-                          <div className="todo-item">
-                            <Checkbox
-                              checked={todo.completed}
-                              onChange={(event) =>
-                                void handleSaveEditedTodo(record, todo, event.currentTarget.checked)
-                              }
-                              disabled={isSavingTodo}
-                            />
-                            <div className="todo-item-main">
-                              {isEditing ? (
-                                <div className="todo-editor-grid compact">
-                                  <TextInput
-                                    label="Todo"
-                                    value={editingTodoText}
-                                    onChange={(event) => setEditingTodoText(event.currentTarget.value)}
-                                  />
-                                  <Select
-                                    label="Owner"
-                                    data={asc(bootstrapData.owners)}
-                                    value={editingTodoOwner}
-                                    onChange={setEditingTodoOwner}
-                                    searchable
-                                  />
-                                  <DateInput
-                                    label="Due date"
-                                    placeholder="Optional"
-                                    valueFormat="DD MMM YYYY"
-                                    clearable
-                                    value={editingTodoDueDate}
-                                    onChange={setEditingTodoDueDate}
-                                  />
+                        {!ownerCollapsed ? (
+                          <div className="todo-tracker-list">
+                            {ownerGroup.trackerGroups.map((trackerGroup) => {
+                              const trackerKey = `${ownerGroup.owner}:${trackerGroup.recordId}`
+                              const trackerCollapsed = collapsedTodoTrackers.has(trackerKey)
+
+                              return (
+                                <div className="todo-tracker-group" key={trackerKey}>
+                                  <button
+                                    type="button"
+                                    className="todo-tracker-header"
+                                    onClick={() => toggleTodoTrackerGroup(trackerKey)}
+                                    aria-expanded={!trackerCollapsed}
+                                  >
+                                    <span className="todo-group-title">
+                                      {trackerCollapsed ? <IconChevronDown size={15} /> : <IconChevronUp size={15} />}
+                                      <span>
+                                        {formatRecordKey(trackerGroup.record.id)} · {trackerGroup.record.title}
+                                      </span>
+                                    </span>
+                                    <span className="todo-group-meta">
+                                      {trackerGroup.overdueCount > 0 ? (
+                                        <Badge size="xs" variant="filled" color="red" radius="xl">
+                                          {trackerGroup.overdueCount} overdue
+                                        </Badge>
+                                      ) : null}
+                                      <Badge size="xs" variant="light" color="gray" radius="xl">
+                                        {trackerGroup.items.length}
+                                      </Badge>
+                                    </span>
+                                  </button>
+
+                                  {!trackerCollapsed ? (
+                                    <Stack gap="sm">
+                                      <Group justify="space-between" align="flex-start">
+                                        <Text size="sm" c="dimmed">
+                                          {trackerGroup.record.owner} · {trackerGroup.record.status} · {trackerGroup.record.projects.join(', ') || 'No project'}
+                                        </Text>
+                                        <Button
+                                          type="button"
+                                          variant="subtle"
+                                          color="blue"
+                                          radius="xl"
+                                          size="compact-sm"
+                                          onClick={() => jumpToRecord(trackerGroup.record.id)}
+                                        >
+                                          Open record
+                                        </Button>
+                                      </Group>
+
+                                      {trackerGroup.items.map(({ record, todo }) => {
+                                        const isEditing = editingTodoId === todo.id
+                                        const isPastDue = isTodoPastDue(todo)
+
+                                        return (
+                                          <div className={`todo-item ${todo.completed ? 'completed' : ''} ${isPastDue ? 'past-due' : ''}`} key={`${record.id}-${todo.id}`}>
+                                            <Checkbox
+                                              checked={todo.completed}
+                                              onChange={(event) =>
+                                                void handleSaveEditedTodo(record, todo, event.currentTarget.checked)
+                                              }
+                                              disabled={isSavingTodo}
+                                            />
+                                            <div className="todo-item-main">
+                                              {isEditing ? (
+                                                <div className="todo-editor-grid compact">
+                                                  <TextInput
+                                                    label="Todo"
+                                                    value={editingTodoText}
+                                                    onChange={(event) => setEditingTodoText(event.currentTarget.value)}
+                                                  />
+                                                  <Select
+                                                    label="Owner"
+                                                    data={asc(bootstrapData.owners)}
+                                                    value={editingTodoOwner}
+                                                    onChange={setEditingTodoOwner}
+                                                    searchable
+                                                  />
+                                                  <DateInput
+                                                    label="Due date"
+                                                    placeholder="Optional"
+                                                    valueFormat="DD MMM YYYY"
+                                                    clearable
+                                                    value={editingTodoDueDate}
+                                                    onChange={setEditingTodoDueDate}
+                                                  />
+                                                </div>
+                                              ) : (
+                                                <>
+                                                  <Group gap="xs" align="center">
+                                                    <Text fw={600}>{todo.text}</Text>
+                                                    {isPastDue ? (
+                                                      <Badge size="xs" variant="filled" color="red" radius="xl">
+                                                        Past due
+                                                      </Badge>
+                                                    ) : null}
+                                                  </Group>
+                                                  <div className="record-row-meta">
+                                                    <span>{todo.owner}</span>
+                                                    <span>{todo.dueDate ? `Due ${formatShortDate(todo.dueDate)}` : 'No due date'}</span>
+                                                  </div>
+                                                </>
+                                              )}
+                                            </div>
+                                            <Group gap={4} wrap="nowrap">
+                                              {isEditing ? (
+                                                <>
+                                                  <ActionIcon
+                                                    variant="subtle"
+                                                    color="green"
+                                                    onClick={() => void handleSaveEditedTodo(record, todo)}
+                                                    loading={isSavingTodo}
+                                                    aria-label="Save todo"
+                                                  >
+                                                    <IconCheck size={16} />
+                                                  </ActionIcon>
+                                                  <ActionIcon
+                                                    variant="subtle"
+                                                    color="gray"
+                                                    onClick={cancelEditingTodo}
+                                                    aria-label="Cancel todo edit"
+                                                  >
+                                                    <IconX size={16} />
+                                                  </ActionIcon>
+                                                </>
+                                              ) : (
+                                                <ActionIcon
+                                                  variant="subtle"
+                                                  color="gray"
+                                                  onClick={() => startEditingTodo(todo)}
+                                                  aria-label="Edit todo"
+                                                >
+                                                  <IconEdit size={16} />
+                                                </ActionIcon>
+                                              )}
+                                              <ActionIcon
+                                                variant="subtle"
+                                                color="red"
+                                                onClick={() => void handleDeleteTodo(record, todo)}
+                                                loading={isDeletingTodoId === todo.id}
+                                                aria-label="Delete todo"
+                                              >
+                                                <IconTrash size={16} />
+                                              </ActionIcon>
+                                            </Group>
+                                          </div>
+                                        )
+                                      })}
+                                    </Stack>
+                                  ) : null}
                                 </div>
-                              ) : (
-                                <>
-                                  <Text fw={600}>{todo.text}</Text>
-                                  <div className="record-row-meta">
-                                    <span>{todo.owner}</span>
-                                    <span>{todo.dueDate ? `Due ${formatShortDate(todo.dueDate)}` : 'No due date'}</span>
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                            <Group gap={4} wrap="nowrap">
-                              {isEditing ? (
-                                <>
-                                  <ActionIcon
-                                    variant="subtle"
-                                    color="green"
-                                    onClick={() => void handleSaveEditedTodo(record, todo)}
-                                    loading={isSavingTodo}
-                                    aria-label="Save todo"
-                                  >
-                                    <IconCheck size={16} />
-                                  </ActionIcon>
-                                  <ActionIcon
-                                    variant="subtle"
-                                    color="gray"
-                                    onClick={cancelEditingTodo}
-                                    aria-label="Cancel todo edit"
-                                  >
-                                    <IconX size={16} />
-                                  </ActionIcon>
-                                </>
-                              ) : (
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="gray"
-                                  onClick={() => startEditingTodo(todo)}
-                                  aria-label="Edit todo"
-                                >
-                                  <IconEdit size={16} />
-                                </ActionIcon>
-                              )}
-                              <ActionIcon
-                                variant="subtle"
-                                color="red"
-                                onClick={() => void handleDeleteTodo(record, todo)}
-                                loading={isDeletingTodoId === todo.id}
-                                aria-label="Delete todo"
-                              >
-                                <IconTrash size={16} />
-                              </ActionIcon>
-                            </Group>
+                              )
+                            })}
                           </div>
-                        </Stack>
+                        ) : null}
                       </Card>
                     )
                   })}

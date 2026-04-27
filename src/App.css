@@ -1031,6 +1031,11 @@
   background: var(--jira-surface-soft);
 }
 
+.todo-item.past-due {
+  border-color: var(--mantine-color-red-5);
+  background: color-mix(in srgb, var(--mantine-color-red-0) 56%, var(--jira-surface-soft));
+}
+
 .todo-item.completed {
   opacity: 0.68;
 }
@@ -1048,6 +1053,60 @@
 
 .todo-page-item {
   border-left: 3px solid var(--jira-accent);
+}
+
+.todo-owner-group {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.todo-group-header,
+.todo-tracker-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.todo-group-title,
+.todo-group-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.todo-group-title {
+  font-weight: 700;
+}
+
+.todo-group-title span:last-child {
+  overflow-wrap: anywhere;
+}
+
+.todo-tracker-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.todo-tracker-group {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid var(--jira-border);
+  border-radius: 0.8rem;
+  background: var(--jira-surface);
+}
+
+.todo-tracker-header {
+  padding-bottom: 0.15rem;
 }
 
 .mention-token {
@@ -1388,6 +1447,12 @@
   }
 
   .todo-item {
+    flex-direction: column;
+  }
+
+  .todo-group-header,
+  .todo-tracker-header {
+    align-items: flex-start;
     flex-direction: column;
   }
 
