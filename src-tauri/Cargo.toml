@@ -1,6 +1,6 @@
 [package]
 name = "tracker"
-version = "0.2.1"
+version = "0.2.2"
 description = "Shared JSON activity tracker"
 authors = ["salvolm"]
 edition = "2021"
