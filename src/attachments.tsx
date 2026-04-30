@@ -120,17 +120,6 @@ export function mergeAttachments(
   nextAttachments: AttachmentPayload[],
   subject: 'record' | 'comment',
 ) {
-  const oversized = nextAttachments.find(
-    (attachment) => attachment.sizeBytes > 10 * 1024 * 1024,
-  )
-
-  if (oversized) {
-    return {
-      attachments: existing,
-      error: `"${oversized.fileName}" is larger than the 10 MB per-file limit.`,
-    }
-  }
-
   if (existing.length + nextAttachments.length > 10) {
     return {
       attachments: existing,

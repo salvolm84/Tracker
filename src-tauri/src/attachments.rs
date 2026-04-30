@@ -53,13 +53,6 @@ fn externalize_one(db_path: &Path, mut attachment: Attachment) -> Result<Attachm
             )
         })?;
 
-    if bytes.len() > 10 * 1024 * 1024 {
-        return Err(format!(
-            "Attachment '{}' exceeds the 10 MB limit",
-            attachment.file_name
-        ));
-    }
-
     let storage_id = if attachment.storage_id.trim().is_empty() {
         Uuid::new_v4().to_string()
     } else {

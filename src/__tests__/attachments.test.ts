@@ -23,11 +23,11 @@ describe('mergeAttachments', () => {
     expect(result.attachments).toHaveLength(2)
   })
 
-  it('rejects files over 10 MB', () => {
+  it('allows files over 10 MB', () => {
     const bigFile = makeAttachment({ fileName: 'huge.bin', sizeBytes: 11 * 1024 * 1024 })
     const result = mergeAttachments([], [bigFile], 'record')
-    expect(result.error).toContain('larger than the 10 MB per-file limit')
-    expect(result.attachments).toHaveLength(0)
+    expect(result.error).toBeNull()
+    expect(result.attachments).toHaveLength(1)
   })
 
   it('rejects when total would exceed 10 attachments', () => {

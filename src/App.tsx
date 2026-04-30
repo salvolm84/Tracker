@@ -1822,6 +1822,8 @@ function App() {
   const [weeklyCopyState, setWeeklyCopyState] = useState<'idle' | 'success' | 'error'>(
     'idle',
   )
+  const [weeklyEntryOrder, setWeeklyEntryOrder] = useState<string[]>([])
+  const [weeklyCommentOrders, setWeeklyCommentOrders] = useState<Record<string, string[]>>({})
   const [isBootstrapping, setIsBootstrapping] = useState(true)
   const [isRefreshingStats, setIsRefreshingStats] = useState(false)
   const [isRefreshingRecords, setIsRefreshingRecords] = useState(false)
@@ -2706,6 +2708,27 @@ function App() {
         ),
     }))
     .filter((entry) => entry.comments.length > 0)
+  const weeklyOrderedEntryIds = [
+    ...weeklyEntryOrder.filter((id) =>
+      weeklyReportEntries.some((e) => e.record.id === id),
+    ),
+    ...weeklyReportEntries
+      .filter((e) => !weeklyEntryOrder.includes(e.record.id))
+      .map((e) => e.record.id),
+  ]
+  const weeklyOrderedEntries = weeklyOrderedEntryIds.map((recordId) => {
+    const entry = weeklyReportEntries.find((e) => e.record.id === recordId)!
+    const commentOrder = weeklyCommentOrders[recordId]
+    if (!commentOrder) return entry
+    const commentMap = new Map(entry.comments.map((c) => [c.id, c]))
+    const orderedComments = [
+      ...commentOrder
+        .filter((id) => commentMap.has(id))
+        .map((id) => commentMap.get(id)!),
+      ...entry.comments.filter((c) => !commentOrder.includes(c.id)),
+    ]
+    return { ...entry, comments: orderedComments }
+  })
   const weeklyIncludedCommentCount = weeklyReportEntries.reduce(
     (sum, entry) => sum + entry.comments.length,
     0,
@@ -2715,14 +2738,14 @@ function App() {
       ? 'No activities were updated in the selected window.'
       : `${weeklyReportEntries.length} activities received ${weeklyIncludedCommentCount} updates across ${new Set(weeklyReportEntries.map((entry) => entry.record.owner)).size} owners and ${new Set(weeklyReportEntries.flatMap((entry) => entry.record.projects)).size} projects.`
   const weeklyGroupedByOwner = Array.from(
-    weeklyReportEntries.reduce((groups, entry) => {
+    weeklyOrderedEntries.reduce((groups, entry) => {
       const key = entry.record.owner
       groups.set(key, [...(groups.get(key) ?? []), entry])
       return groups
-    }, new Map<string, typeof weeklyReportEntries>()),
+    }, new Map<string, typeof weeklyOrderedEntries>()),
   ).sort((left, right) => left[0].localeCompare(right[0]))
   const weeklyGroupedByProject = Array.from(
-    weeklyReportEntries.reduce((groups, entry) => {
+    weeklyOrderedEntries.reduce((groups, entry) => {
       for (const project of entry.record.projects) {
         groups.set(project, [...(groups.get(project) ?? []), entry])
       }
@@ -2761,7 +2784,7 @@ function App() {
           ? [
               weeklyExecutiveSummary,
               '',
-              ...weeklyReportEntries.flatMap((entry) => [
+              ...weeklyOrderedEntries.flatMap((entry) => [
                 `- ${weeklyRecordLabel(entry.record, [entry.record.status, entry.record.owner])}`,
                 ...entry.comments.map(weeklyCommentLine),
                 '',
@@ -2785,7 +2808,7 @@ function App() {
                     '',
                   ]),
                 ])
-              : weeklyReportEntries.flatMap((entry) => [
+              : weeklyOrderedEntries.flatMap((entry) => [
                   `- ${weeklyRecordLabel(entry.record)}`,
                   ...entry.comments.map(weeklyCommentLine),
                   '',
@@ -4758,6 +4781,26 @@ function App() {
     } finally {
       setIsRestoringBackupPath(null)
     }
+  }
+
+  function moveWeeklyEntry(index: number, direction: 'up' | 'down') {
+    const ids = weeklyOrderedEntries.map((e) => e.record.id)
+    const target = direction === 'up' ? index - 1 : index + 1
+    if (target < 0 || target >= ids.length) return
+    const next = [...ids]
+    ;[next[index], next[target]] = [next[target], next[index]]
+    setWeeklyEntryOrder(next)
+  }
+
+  function moveWeeklyComment(recordId: string, commentIndex: number, direction: 'up' | 'down') {
+    const entry = weeklyOrderedEntries.find((e) => e.record.id === recordId)
+    if (!entry) return
+    const ids = entry.comments.map((c) => c.id)
+    const target = direction === 'up' ? commentIndex - 1 : commentIndex + 1
+    if (target < 0 || target >= ids.length) return
+    const next = [...ids]
+    ;[next[commentIndex], next[target]] = [next[target], next[commentIndex]]
+    setWeeklyCommentOrders((prev) => ({ ...prev, [recordId]: next }))
   }
 
   async function handleCopyWeeklyReport() {
@@ -7172,8 +7215,8 @@ function App() {
                               placeholder="Optional"
                               valueFormat="DD MMM YYYY"
                               clearable
-                              value={todoDueDate}
-                              onChange={setTodoDueDate}
+                              value={todoDueDate ? dayjs(todoDueDate).toDate() : null}
+                              onChange={(d) => setTodoDueDate(d ? dayjs(d).format('YYYY-MM-DD') : null)}
                             />
                           </div>
 
@@ -7232,8 +7275,8 @@ function App() {
                                             placeholder="Optional"
                                             valueFormat="DD MMM YYYY"
                                             clearable
-                                            value={editingTodoDueDate}
-                                            onChange={setEditingTodoDueDate}
+                                            value={editingTodoDueDate ? dayjs(editingTodoDueDate).toDate() : null}
+                                            onChange={(d) => setEditingTodoDueDate(d ? dayjs(d).format('YYYY-MM-DD') : null)}
                                           />
                                         </div>
                                       ) : (
@@ -8091,8 +8134,8 @@ function App() {
                                                     placeholder="Optional"
                                                     valueFormat="DD MMM YYYY"
                                                     clearable
-                                                    value={editingTodoDueDate}
-                                                    onChange={setEditingTodoDueDate}
+                                                    value={editingTodoDueDate ? dayjs(editingTodoDueDate).toDate() : null}
+                                                    onChange={(d) => setEditingTodoDueDate(d ? dayjs(d).format('YYYY-MM-DD') : null)}
                                                   />
                                                 </div>
                                               ) : (
@@ -8757,6 +8800,88 @@ function App() {
                   )}
                 </Stack>
               </Card>
+
+              {weeklyOrderedEntries.length > 0 ? (
+                <Card radius="xl" padding="md" className="surface-card">
+                  <Stack gap="sm">
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Text fw={700}>Entry order</Text>
+                        <Text size="sm" c="dimmed">
+                          Use the arrows to reorder tracker entries and their comments before copying.
+                        </Text>
+                      </div>
+                      <Badge variant="light" color="blue">
+                        {weeklyOrderedEntries.length} item{weeklyOrderedEntries.length === 1 ? '' : 's'}
+                      </Badge>
+                    </Group>
+                    <Stack gap="xs">
+                      {weeklyOrderedEntries.map((entry, entryIndex) => (
+                        <div key={entry.record.id} className="weekly-reorder-entry">
+                          <div className="weekly-reorder-entry-header">
+                            <div className="weekly-reorder-arrows">
+                              <ActionIcon
+                                variant="subtle"
+                                color="gray"
+                                size="xs"
+                                disabled={entryIndex === 0}
+                                onClick={() => moveWeeklyEntry(entryIndex, 'up')}
+                                aria-label="Move entry up"
+                              >
+                                <IconChevronUp size={12} />
+                              </ActionIcon>
+                              <ActionIcon
+                                variant="subtle"
+                                color="gray"
+                                size="xs"
+                                disabled={entryIndex === weeklyOrderedEntries.length - 1}
+                                onClick={() => moveWeeklyEntry(entryIndex, 'down')}
+                                aria-label="Move entry down"
+                              >
+                                <IconChevronDown size={12} />
+                              </ActionIcon>
+                            </div>
+                            <Text fw={600} size="sm" className="weekly-reorder-label">
+                              {weeklyRecordLabel(entry.record)}
+                            </Text>
+                          </div>
+                          {entry.comments.map((comment, commentIndex) => (
+                            <div key={comment.id} className="weekly-reorder-comment">
+                              <div className="weekly-reorder-arrows">
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="gray"
+                                  size="xs"
+                                  disabled={commentIndex === 0}
+                                  onClick={() => moveWeeklyComment(entry.record.id, commentIndex, 'up')}
+                                  aria-label="Move comment up"
+                                >
+                                  <IconChevronUp size={12} />
+                                </ActionIcon>
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="gray"
+                                  size="xs"
+                                  disabled={commentIndex === entry.comments.length - 1}
+                                  onClick={() => moveWeeklyComment(entry.record.id, commentIndex, 'down')}
+                                  aria-label="Move comment down"
+                                >
+                                  <IconChevronDown size={12} />
+                                </ActionIcon>
+                              </div>
+                              <Text size="xs" c="dimmed" className="weekly-reorder-label">
+                                {weeklyShowCommentDates
+                                  ? `${formatCommentDate(comment.createdAt)}: ${comment.message.split('\n')[0]}`
+                                  : comment.message.split('\n')[0]}
+                              </Text>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </Stack>
+                  </Stack>
+                </Card>
+              ) : null}
 
               <Card radius="xl" padding="lg" className="surface-card weekly-print-region">
                 <Stack gap="md">

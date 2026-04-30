@@ -13,7 +13,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{DateTime, NaiveDate, Utc};
 use fs2::FileExt;
 use serde::{Deserialize, Deserializer, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
 mod attachments;
@@ -3648,6 +3648,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(SaveLock(Mutex::new(())))
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_icon(tauri::include_image!("icons/icon.png"));
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             bootstrap_form,
             get_database_stats,
