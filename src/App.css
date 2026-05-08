@@ -483,6 +483,14 @@
   white-space: nowrap;
 }
 
+.weekly-reorder-entry.hidden {
+  opacity: 0.4;
+}
+
+.weekly-reorder-comment.hidden {
+  opacity: 0.4;
+}
+
 .filter-toolbar-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 1fr)) auto;

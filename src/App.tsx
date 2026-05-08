@@ -40,6 +40,8 @@ import {
   IconChevronUp,
   IconCheck,
   IconCircleCheck,
+  IconEye,
+  IconEyeOff,
   IconClipboardText,
   IconCode,
   IconCopy,
@@ -1824,6 +1826,8 @@ function App() {
   )
   const [weeklyEntryOrder, setWeeklyEntryOrder] = useState<string[]>([])
   const [weeklyCommentOrders, setWeeklyCommentOrders] = useState<Record<string, string[]>>({})
+  const [weeklyHiddenEntryIds, setWeeklyHiddenEntryIds] = useState<Set<string>>(new Set())
+  const [weeklyHiddenCommentIds, setWeeklyHiddenCommentIds] = useState<Set<string>>(new Set())
   const [isBootstrapping, setIsBootstrapping] = useState(true)
   const [isRefreshingStats, setIsRefreshingStats] = useState(false)
   const [isRefreshingRecords, setIsRefreshingRecords] = useState(false)
@@ -1878,6 +1882,7 @@ function App() {
   const [draggingRecordId, setDraggingRecordId] = useState<string | null>(null)
   const [isFiltersCollapsed, setIsFiltersCollapsed] = useState(true)
   const [showCompletedColumn, setShowCompletedColumn] = useState(false)
+  const [showCompletedRecords, setShowCompletedRecords] = useState(false)
   const [heatmapValueMode, setHeatmapValueMode] =
     useState<HeatmapValueMode>('count')
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
@@ -2376,6 +2381,12 @@ function App() {
     ],
     [filteredRecords, pinnedRecordIds],
   )
+  const recordsPageDisplay = useMemo(
+    () => showCompletedRecords || !completedStatusLabel
+      ? recordsListDisplay
+      : recordsListDisplay.filter((r) => r.status.toLowerCase() !== 'completed'),
+    [recordsListDisplay, showCompletedRecords, completedStatusLabel],
+  )
   const allOpenTodos = useMemo(
     () => records.flatMap((r) => r.todos ?? []).filter((t) => !t.completed),
     [records],
@@ -2611,7 +2622,7 @@ function App() {
     6,
   )
   const insightHeatmap = buildHeatmap(
-    filteredInsightRecords,
+    filteredInsightRecords.filter((r) => r.status.toLowerCase() === 'completed'),
     bootstrapData.efforts,
     bootstrapData.impacts,
   )
@@ -2729,23 +2740,30 @@ function App() {
     ]
     return { ...entry, comments: orderedComments }
   })
-  const weeklyIncludedCommentCount = weeklyReportEntries.reduce(
+  const weeklyVisibleEntries = weeklyOrderedEntries
+    .filter((entry) => !weeklyHiddenEntryIds.has(entry.record.id))
+    .map((entry) => ({
+      ...entry,
+      comments: entry.comments.filter((c) => !weeklyHiddenCommentIds.has(c.id)),
+    }))
+    .filter((entry) => entry.comments.length > 0)
+  const weeklyIncludedCommentCount = weeklyVisibleEntries.reduce(
     (sum, entry) => sum + entry.comments.length,
     0,
   )
   const weeklyExecutiveSummary =
-    weeklyReportEntries.length === 0
+    weeklyVisibleEntries.length === 0
       ? 'No activities were updated in the selected window.'
-      : `${weeklyReportEntries.length} activities received ${weeklyIncludedCommentCount} updates across ${new Set(weeklyReportEntries.map((entry) => entry.record.owner)).size} owners and ${new Set(weeklyReportEntries.flatMap((entry) => entry.record.projects)).size} projects.`
+      : `${weeklyVisibleEntries.length} activities received ${weeklyIncludedCommentCount} updates across ${new Set(weeklyVisibleEntries.map((entry) => entry.record.owner)).size} owners and ${new Set(weeklyVisibleEntries.flatMap((entry) => entry.record.projects)).size} projects.`
   const weeklyGroupedByOwner = Array.from(
-    weeklyOrderedEntries.reduce((groups, entry) => {
+    weeklyVisibleEntries.reduce((groups, entry) => {
       const key = entry.record.owner
       groups.set(key, [...(groups.get(key) ?? []), entry])
       return groups
     }, new Map<string, typeof weeklyOrderedEntries>()),
   ).sort((left, right) => left[0].localeCompare(right[0]))
   const weeklyGroupedByProject = Array.from(
-    weeklyOrderedEntries.reduce((groups, entry) => {
+    weeklyVisibleEntries.reduce((groups, entry) => {
       for (const project of entry.record.projects) {
         groups.set(project, [...(groups.get(project) ?? []), entry])
       }
@@ -2778,13 +2796,13 @@ function App() {
     '',
     ...(!weeklyWindowStart || !weeklyWindowEnd
       ? ['Select both a start date and an end date to generate the report.']
-      : weeklyReportEntries.length === 0
+      : weeklyVisibleEntries.length === 0
         ? ['No activity updates were recorded in the selected window.']
         : weeklyTemplate === 'executive'
           ? [
               weeklyExecutiveSummary,
               '',
-              ...weeklyOrderedEntries.flatMap((entry) => [
+              ...weeklyVisibleEntries.flatMap((entry) => [
                 `- ${weeklyRecordLabel(entry.record, [entry.record.status, entry.record.owner])}`,
                 ...entry.comments.map(weeklyCommentLine),
                 '',
@@ -2808,7 +2826,7 @@ function App() {
                     '',
                   ]),
                 ])
-              : weeklyOrderedEntries.flatMap((entry) => [
+              : weeklyVisibleEntries.flatMap((entry) => [
                   `- ${weeklyRecordLabel(entry.record)}`,
                   ...entry.comments.map(weeklyCommentLine),
                   '',
@@ -3054,19 +3072,19 @@ function App() {
   ])
 
   useEffect(() => {
-    if (filteredRecords.length === 0) {
+    if (recordsPageDisplay.length === 0) {
       if (selectedRecordId !== null) {
         setSelectedRecordId(null)
       }
       return
     }
 
-    if (selectedRecordId && filteredRecords.some((record) => record.id === selectedRecordId)) {
+    if (selectedRecordId && recordsPageDisplay.some((record) => record.id === selectedRecordId)) {
       return
     }
 
-    setSelectedRecordId(filteredRecords[0]?.id ?? null)
-  }, [filteredRecords, selectedRecordId])
+    setSelectedRecordId(recordsPageDisplay[0]?.id ?? null)
+  }, [recordsPageDisplay, selectedRecordId])
 
   const handleGlobalKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (isTypingTarget(event.target)) {
@@ -3099,19 +3117,19 @@ function App() {
       return
     }
 
-    if (currentPage !== 'records' || filteredRecords.length === 0) {
+    if (currentPage !== 'records' || recordsPageDisplay.length === 0) {
       return
     }
 
     const currentIndex = selectedRecordId
-      ? filteredRecords.findIndex((record) => record.id === selectedRecordId)
+      ? recordsPageDisplay.findIndex((record) => record.id === selectedRecordId)
       : 0
     const safeIndex = currentIndex >= 0 ? currentIndex : 0
 
     if (event.key === 'j' || event.key === 'ArrowDown') {
       event.preventDefault()
       const nextRecord =
-        filteredRecords[Math.min(safeIndex + 1, filteredRecords.length - 1)]
+        recordsPageDisplay[Math.min(safeIndex + 1, recordsPageDisplay.length - 1)]
       if (nextRecord) {
         setSelectedRecordId(nextRecord.id)
       }
@@ -3120,7 +3138,7 @@ function App() {
 
     if (event.key === 'k' || event.key === 'ArrowUp') {
       event.preventDefault()
-      const previousRecord = filteredRecords[Math.max(safeIndex - 1, 0)]
+      const previousRecord = recordsPageDisplay[Math.max(safeIndex - 1, 0)]
       if (previousRecord) {
         setSelectedRecordId(previousRecord.id)
       }
@@ -6727,6 +6745,14 @@ function App() {
                     Export CSV
                   </Button>
                   <Button
+                    variant={showCompletedRecords ? 'filled' : 'default'}
+                    color={showCompletedRecords ? 'blue' : undefined}
+                    radius="xl"
+                    onClick={() => setShowCompletedRecords((v) => !v)}
+                  >
+                    {showCompletedRecords ? 'Hide completed' : 'Show completed'}
+                  </Button>
+                  <Button
                     variant={isBulkMode ? 'filled' : 'default'}
                     color={isBulkMode ? 'blue' : undefined}
                     radius="xl"
@@ -6757,8 +6783,8 @@ function App() {
                       <div>
                         <Text fw={700}>Record list</Text>
                         <Text size="sm" c="dimmed">
-                          {filteredRecords.length} saved record
-                          {filteredRecords.length === 1 ? '' : 's'}
+                          {recordsPageDisplay.length} saved record
+                          {recordsPageDisplay.length === 1 ? '' : 's'}
                           {pinnedRecordIds.size > 0 ? ` · ${pinnedRecordIds.size} pinned` : ''}
                         </Text>
                       </div>
@@ -6799,7 +6825,7 @@ function App() {
                       </div>
                     ) : (
                       <div className="records-list">
-                        {recordsListDisplay.map((record) => (
+                        {recordsPageDisplay.map((record) => (
                           <div
                             key={record.id}
                             ref={(node) => {
@@ -8597,7 +8623,7 @@ function App() {
                     {/* Effort vs Impact heatmap */}
                     <HeatmapPlot
                       title="Effort vs impact"
-                      subtitle="Where the current workload sits in the effort-impact matrix"
+                      subtitle="Where completed activities sit in the effort-impact matrix"
                       cells={insightHeatmap}
                       efforts={bootstrapData.efforts}
                       impacts={bootstrapData.impacts}
@@ -8671,7 +8697,7 @@ function App() {
                 </Card>
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Text className="metric-label">Activities included</Text>
-                  <Text className="insight-value">{weeklyReportEntries.length}</Text>
+                  <Text className="insight-value">{weeklyVisibleEntries.length}</Text>
                 </Card>
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Text className="metric-label">Comments included</Text>
@@ -8816,8 +8842,10 @@ function App() {
                       </Badge>
                     </Group>
                     <Stack gap="xs">
-                      {weeklyOrderedEntries.map((entry, entryIndex) => (
-                        <div key={entry.record.id} className="weekly-reorder-entry">
+                      {weeklyOrderedEntries.map((entry, entryIndex) => {
+                        const entryHidden = weeklyHiddenEntryIds.has(entry.record.id)
+                        return (
+                        <div key={entry.record.id} className={`weekly-reorder-entry${entryHidden ? ' hidden' : ''}`}>
                           <div className="weekly-reorder-entry-header">
                             <div className="weekly-reorder-arrows">
                               <ActionIcon
@@ -8841,12 +8869,29 @@ function App() {
                                 <IconChevronDown size={12} />
                               </ActionIcon>
                             </div>
+                            <ActionIcon
+                              variant="subtle"
+                              color={entryHidden ? 'blue' : 'gray'}
+                              size="xs"
+                              onClick={() => setWeeklyHiddenEntryIds((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(entry.record.id)) next.delete(entry.record.id)
+                                else next.add(entry.record.id)
+                                return next
+                              })}
+                              aria-label={entryHidden ? 'Show entry in report' : 'Hide entry from report'}
+                              title={entryHidden ? 'Show in report' : 'Hide from report'}
+                            >
+                              {entryHidden ? <IconEye size={12} /> : <IconEyeOff size={12} />}
+                            </ActionIcon>
                             <Text fw={600} size="sm" className="weekly-reorder-label">
                               {weeklyRecordLabel(entry.record)}
                             </Text>
                           </div>
-                          {entry.comments.map((comment, commentIndex) => (
-                            <div key={comment.id} className="weekly-reorder-comment">
+                          {entry.comments.map((comment, commentIndex) => {
+                            const commentHidden = entryHidden || weeklyHiddenCommentIds.has(comment.id)
+                            return (
+                            <div key={comment.id} className={`weekly-reorder-comment${commentHidden ? ' hidden' : ''}`}>
                               <div className="weekly-reorder-arrows">
                                 <ActionIcon
                                   variant="subtle"
@@ -8869,15 +8914,34 @@ function App() {
                                   <IconChevronDown size={12} />
                                 </ActionIcon>
                               </div>
+                              {!entryHidden && (
+                                <ActionIcon
+                                  variant="subtle"
+                                  color={weeklyHiddenCommentIds.has(comment.id) ? 'blue' : 'gray'}
+                                  size="xs"
+                                  onClick={() => setWeeklyHiddenCommentIds((prev) => {
+                                    const next = new Set(prev)
+                                    if (next.has(comment.id)) next.delete(comment.id)
+                                    else next.add(comment.id)
+                                    return next
+                                  })}
+                                  aria-label={weeklyHiddenCommentIds.has(comment.id) ? 'Show comment in report' : 'Hide comment from report'}
+                                  title={weeklyHiddenCommentIds.has(comment.id) ? 'Show in report' : 'Hide from report'}
+                                >
+                                  {weeklyHiddenCommentIds.has(comment.id) ? <IconEye size={12} /> : <IconEyeOff size={12} />}
+                                </ActionIcon>
+                              )}
                               <Text size="xs" c="dimmed" className="weekly-reorder-label">
                                 {weeklyShowCommentDates
                                   ? `${formatCommentDate(comment.createdAt)}: ${comment.message.split('\n')[0]}`
                                   : comment.message.split('\n')[0]}
                               </Text>
                             </div>
-                          ))}
+                            )
+                          })}
                         </div>
-                      ))}
+                        )
+                      })}
                     </Stack>
                   </Stack>
                 </Card>
@@ -8893,8 +8957,8 @@ function App() {
                       </Text>
                     </div>
                     <Badge variant="light" color="blue">
-                      {weeklyReportEntries.length} item
-                      {weeklyReportEntries.length === 1 ? '' : 's'}
+                      {weeklyVisibleEntries.length} item
+                      {weeklyVisibleEntries.length === 1 ? '' : 's'}
                     </Badge>
                   </Group>
 
