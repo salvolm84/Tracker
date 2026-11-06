@@ -1811,6 +1811,7 @@ function App() {
   const [weeklyTemplate, setWeeklyTemplate] = useState<WeeklyTemplate>('bullets')
   const [weeklyReportYear, setWeeklyReportYear] = useState(String(currentIsoYear))
   const [weeklyReportWeek, setWeeklyReportWeek] = useState(String(currentIsoWeek))
+  const [weeklyWeekSpan, setWeeklyWeekSpan] = useState('1')
   const [weeklyRangeStart, setWeeklyRangeStart] = useState<Date | null>(
     currentIsoWeekStart.toDate(),
   )
@@ -2670,6 +2671,17 @@ function App() {
       label: `CWK ${index + 1}`,
     }),
   )
+  const weeklyWeekSpanOptions = [1, 2, 3, 4].map((count) => ({
+    value: String(count),
+    label: count === 1 ? 'Selected week only' : `Last ${count} weeks`,
+  }))
+  const selectedWeeklySpan = Math.max(1, Number(weeklyWeekSpan) || 1)
+  const selectedIsoWeekEnd = dayjs(`${selectedWeeklyYear}-01-04`)
+    .isoWeek(selectedWeeklyWeek)
+    .endOf('isoWeek')
+  const selectedIsoWeekStart = selectedIsoWeekEnd
+    .subtract(selectedWeeklySpan - 1, 'week')
+    .startOf('isoWeek')
   const rawRangeStart = weeklyRangeStart ? dayjs(weeklyRangeStart).startOf('day') : null
   const rawRangeEnd = weeklyRangeEnd ? dayjs(weeklyRangeEnd).endOf('day') : null
   const selectedRangeStart =
@@ -2681,23 +2693,23 @@ function App() {
       ? rawRangeStart.endOf('day')
       : rawRangeEnd
   const weeklyWindowStart =
-    weeklyReportMode === 'week'
-      ? dayjs(`${selectedWeeklyYear}-01-04`).isoWeek(selectedWeeklyWeek).startOf('isoWeek')
-      : selectedRangeStart
+    weeklyReportMode === 'week' ? selectedIsoWeekStart : selectedRangeStart
   const weeklyWindowEnd =
-    weeklyReportMode === 'week'
-      ? dayjs(`${selectedWeeklyYear}-01-04`).isoWeek(selectedWeeklyWeek).endOf('isoWeek')
-      : selectedRangeEnd
+    weeklyReportMode === 'week' ? selectedIsoWeekEnd : selectedRangeEnd
   const weeklyRangeLabel =
-    weeklyReportMode === 'week'
+    weeklyReportMode === 'week' && selectedWeeklySpan === 1
       ? formatWeeklyRange(selectedWeeklyYear, selectedWeeklyWeek)
       : weeklyWindowStart && weeklyWindowEnd
         ? `${weeklyWindowStart.format('DD MMM YYYY')} - ${weeklyWindowEnd.format('DD MMM YYYY')}`
         : 'Select a custom date range'
-  const weeklyWindowLabel =
-    weeklyReportMode === 'week'
+  const weeklyIsoWeekLabel =
+    selectedWeeklySpan === 1
       ? `CWK ${selectedWeeklyWeek} ${selectedWeeklyYear}`
-      : weeklyRangeLabel
+      : selectedIsoWeekStart.isoWeekYear() === selectedWeeklyYear
+        ? `CWK ${selectedIsoWeekStart.isoWeek()}-${selectedWeeklyWeek} ${selectedWeeklyYear}`
+        : `CWK ${selectedIsoWeekStart.isoWeek()} ${selectedIsoWeekStart.isoWeekYear()} - CWK ${selectedWeeklyWeek} ${selectedWeeklyYear}`
+  const weeklyWindowLabel =
+    weeklyReportMode === 'week' ? weeklyIsoWeekLabel : weeklyRangeLabel
   const weeklyReportEntries = filteredRecords
     .map((record) => ({
       record,
@@ -3062,6 +3074,7 @@ function App() {
     weeklyTemplate,
     weeklyReportWeek,
     weeklyReportYear,
+    weeklyWeekSpan,
     weeklyRangeStart,
     weeklyRangeEnd,
     weeklyShowCommentDates,
@@ -5671,11 +5684,16 @@ function App() {
                     {weeklyIncludedCommentCount} comment
                     {weeklyIncludedCommentCount === 1 ? '' : 's'} in{' '}
                     {weeklyReportMode === 'week'
-                      ? `CWK ${selectedWeeklyWeek} ${selectedWeeklyYear}`
+                      ? weeklyIsoWeekLabel
                       : 'the selected range'}
                   </Text>
                   <Text size="sm" c="dimmed">
-                    {weeklyReportMode === 'week' ? 'ISO week window' : 'Custom range'}:{' '}
+                    {weeklyReportMode === 'week'
+                      ? selectedWeeklySpan === 1
+                        ? 'ISO week window'
+                        : 'ISO weeks window'
+                      : 'Custom range'}
+                    :{' '}
                     {weeklyRangeLabel}
                   </Text>
                 </Stack>
@@ -8688,7 +8706,11 @@ function App() {
                 <Card radius="xl" padding="lg" className="surface-card">
                   <Text className="metric-label">Report window</Text>
                   <Text className="insight-value">
-                    {weeklyReportMode === 'week' ? 'ISO week' : 'Date range'}
+                    {weeklyReportMode === 'week'
+                      ? selectedWeeklySpan === 1
+                        ? 'ISO week'
+                        : `${selectedWeeklySpan} ISO weeks`
+                      : 'Date range'}
                   </Text>
                 </Card>
                 <Card radius="xl" padding="lg" className="surface-card">
@@ -8793,9 +8815,18 @@ function App() {
                           value={weeklyReportWeek}
                           onChange={(value) => setWeeklyReportWeek(value ?? '1')}
                         />
+                        <Select
+                          label="Weeks covered"
+                          data={weeklyWeekSpanOptions}
+                          value={weeklyWeekSpan}
+                          onChange={(value) => setWeeklyWeekSpan(value ?? '1')}
+                        />
                       </Group>
                       <Text size="sm" c="dimmed">
-                        Weeks use ISO calendar weeks, from Monday through Sunday.
+                        Weeks use ISO calendar weeks, from Monday through Sunday. When
+                        covering more than one week, the report ends with the selected
+                        week and includes the preceding ones (useful for bi-weekly
+                        reports).
                       </Text>
                     </>
                   ) : (
